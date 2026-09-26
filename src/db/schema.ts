@@ -95,7 +95,7 @@ export const verificationRuns = pgTable('verification_runs', {
 // 7. Security & Action Audit Logs
 export const auditLogs = pgTable('audit_logs', {
   id: text('id').primaryKey(),
-  projectId: text('project_id').references(() => projects.id, { onDelete: 'cascade' }),
+  projectId: text('project_id'),
   userId: text('user_id').notNull(),
   action: text('action').notNull(),
   details: text('details'),
@@ -108,7 +108,6 @@ export const projectsRelations = relations(projects, ({ many }) => ({
   reports: many(analysisReports),
   tasks: many(rescueTasks),
   verificationRuns: many(verificationRuns),
-  auditLogs: many(auditLogs),
 }));
 
 export const projectFilesRelations = relations(projectFiles, ({ one }) => ({

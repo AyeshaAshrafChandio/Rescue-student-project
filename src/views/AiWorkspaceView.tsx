@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Sparkles,
   Play,
@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { Project, RescueTask, ProjectFile } from '../types/index.ts';
 import { DiffViewer } from '../components/DiffViewer.tsx';
+import { RetryStatusInfo } from '../lib/project-service.ts';
 
 interface AiWorkspaceViewProps {
   project: Project;
@@ -25,7 +26,11 @@ interface AiWorkspaceViewProps {
   onSelectTask: (task: RescueTask) => void;
   onApplyChanges: (task: RescueTask, proposedFiles: Array<{ filePath: string; newContent: string }>) => Promise<void>;
   onVerifyTask: (task: RescueTask) => Promise<{ status: 'passed' | 'failed'; stdout: string; stderr: string; passedChecks: string[]; failedChecks: string[] }>;
-  onAskAiFix: (task: RescueTask, userMessage?: string) => Promise<{ explanation: string; rootCause: string; proposedChanges: Array<{ filePath: string; description: string; newContent: string }>; verificationAdvice?: string }>;
+  onAskAiFix: (
+    task: RescueTask,
+    userMessage?: string,
+    onRetryStatus?: (info: RetryStatusInfo) => void
+  ) => Promise<{ explanation: string; rootCause: string; proposedChanges: Array<{ filePath: string; description: string; newContent: string }>; verificationAdvice?: string }>;
   onProceedToNextTask: () => void;
 }
 
@@ -50,7 +55,9 @@ export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
     Array<{ filePath: string; description: string; newContent: string }>
   >(currentTask.proposedChanges || []);
 
-  const [activeDiffFile, setActiveDiffFile] = useState<string | null>(null);
+  const [activeDiffFile, setActiveDiffFile] = useState<string | null>(
+    currentTask.proposedChanges?.[0]?.filePath || null
+  );
   const [userCustomPrompt, setUserCustomPrompt] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
   const [verificationResult, setVerificationResult] = useState<{
@@ -72,6 +79,32 @@ export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
   );
 
   const [appliedFiles, setAppliedFiles] = useState<Record<string, boolean>>({});
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [aiRetryStatus, setAiRetryStatus] = useState<RetryStatusInfo | null>(null);
+  const [lastAiCustomMessage, setLastAiCustomMessage] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    const matchedTarget = currentTask.targetFiles?.[0]
+      ? projectFiles.find(f => f.filePath === currentTask.targetFiles![0] || f.filePath.endsWith(currentTask.targetFiles![0]))?.filePath
+      : undefined;
+    setActiveFileTab(matchedTarget || currentTask.targetFiles?.[0] || projectFiles[0]?.filePath || '');
+    setAiExplanation(currentTask.rootCauseAnalysis || null);
+    setProposedChanges(currentTask.proposedChanges || []);
+    setActiveDiffFile(currentTask.proposedChanges?.[0]?.filePath || null);
+    setVerificationResult(
+      currentTask.verificationOutput
+        ? {
+            status: currentTask.isVerified ? 'passed' : 'failed',
+            stdout: currentTask.verificationOutput,
+            stderr: '',
+            passedChecks: [],
+            failedChecks: [],
+          }
+        : null
+    );
+    setWorkspaceError(null);
+    setAiRetryStatus(null);
+  }, [currentTask.id]);
 
   // Active file content
   const activeFile = projectFiles.find(f => f.filePath === activeFileTab);
@@ -79,9 +112,13 @@ export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
   const handleDiagnoseTask = async (customMessage?: string) => {
     setIsDiagnosing(true);
     setVerificationResult(null);
+    setWorkspaceError(null);
+    setAiRetryStatus(null);
+    const msgToUse = customMessage ?? (userCustomPrompt || undefined);
+    setLastAiCustomMessage(msgToUse);
 
     try {
-      const data = await onAskAiFix(currentTask, customMessage || userCustomPrompt || undefined);
+      const data = await onAskAiFix(currentTask, msgToUse, info => setAiRetryStatus(info));
 
       setAiExplanation(data.explanation + '\n\n**Root Cause:** ' + data.rootCause);
       setProposedChanges(data.proposedChanges || []);
@@ -90,19 +127,22 @@ export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
       }
       setUserCustomPrompt('');
     } catch (err: any) {
-      alert(`AI Assistant Error: ${err.message}`);
+      setWorkspaceError(err.message || 'Gemini AI diagnosis failed after automatic retries.');
     } finally {
       setIsDiagnosing(false);
+      setAiRetryStatus(null);
     }
   };
 
   const handleApplySingleFile = async (filePath: string, newContent: string) => {
+    setWorkspaceError(null);
     await onApplyChanges(currentTask, [{ filePath, newContent }]);
     setAppliedFiles(prev => ({ ...prev, [filePath]: true }));
   };
 
   const handleApplyAllChanges = async () => {
     if (proposedChanges.length === 0) return;
+    setWorkspaceError(null);
     await onApplyChanges(
       currentTask,
       proposedChanges.map(p => ({ filePath: p.filePath, newContent: p.newContent }))
@@ -116,11 +156,12 @@ export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
 
   const handleRunVerification = async () => {
     setIsVerifying(true);
+    setWorkspaceError(null);
     try {
       const result = await onVerifyTask(currentTask);
       setVerificationResult(result);
     } catch (e: any) {
-      alert(`Verification error: ${e.message}`);
+      setWorkspaceError(`Verification error: ${e.message}`);
     } finally {
       setIsVerifying(false);
     }
@@ -130,34 +171,66 @@ export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
 
   return (
     <div className="space-y-6 pb-20">
+      {workspaceError && (
+        <div className="p-3.5 bg-rose-500/10 border border-rose-500/30 rounded-2xl text-rose-300 text-xs flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center space-x-2 min-w-0 flex-1">
+            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+            <span className="break-words">{workspaceError}</span>
+          </div>
+          <div className="flex items-center space-x-2 shrink-0">
+            <button
+              onClick={() => handleDiagnoseTask(lastAiCustomMessage)}
+              disabled={isDiagnosing}
+              className="inline-flex items-center space-x-1.5 bg-rose-600 hover:bg-rose-500 text-white font-bold px-3 py-1.5 rounded-lg transition"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Retry AI Diagnosis</span>
+            </button>
+            <button
+              onClick={() => setWorkspaceError(null)}
+              className="text-rose-400 hover:text-white font-bold px-2 py-0.5 rounded"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
+      {aiRetryStatus && (
+        <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-2xl text-amber-200 text-xs flex items-center space-x-2.5">
+          <RotateCcw className="w-4 h-4 text-amber-400 animate-spin shrink-0" />
+          <span className="break-words">{aiRetryStatus.message}</span>
+        </div>
+      )}
+
       {/* Workspace Header & Task Selector */}
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-        <div className="space-y-1">
-          <div className="flex items-center space-x-2">
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-4 sm:p-6 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div className="space-y-1 min-w-0 w-full">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center space-x-1">
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+              <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
               <span>Autonomous Code Engine</span>
             </span>
             <span className="text-xs text-slate-400">
               Task #{currentTask.taskOrder || 1} of {tasks.length}
             </span>
           </div>
-          <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+          <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight break-words">
             {currentTask.title}
           </h1>
-          <p className="text-xs text-slate-300 max-w-2xl">{currentTask.description}</p>
+          <p className="text-xs text-slate-300 max-w-2xl break-words">{currentTask.description}</p>
         </div>
 
         {/* Task Switcher dropdown */}
-        <div className="flex items-center space-x-3 shrink-0">
-          <div className="relative">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full md:w-auto shrink-0">
+          <div className="relative w-full sm:w-auto">
             <select
               value={currentTask.id}
               onChange={(e) => {
                 const found = tasks.find(t => t.id === e.target.value);
                 if (found) onSelectTask(found);
               }}
-              className="bg-slate-950 border border-slate-700 text-xs font-semibold text-slate-200 rounded-xl px-3 py-2 pr-8 focus:outline-none focus:border-indigo-500"
+              className="w-full sm:w-auto max-w-full bg-slate-950 border border-slate-700 text-xs font-semibold text-slate-200 rounded-xl px-3 py-2 pr-8 focus:outline-none focus:border-indigo-500"
             >
               {tasks.map((t, idx) => (
                 <option key={t.id} value={t.id}>
@@ -170,20 +243,20 @@ export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
           {isCurrentTaskVerified && (
             <button
               onClick={onProceedToNextTask}
-              className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs px-4 py-2 rounded-xl transition flex items-center space-x-1 shadow-lg shadow-emerald-500/20"
+              className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs px-4 py-2 rounded-xl transition flex items-center justify-center space-x-1 shadow-lg shadow-emerald-500/20 whitespace-nowrap"
             >
               <span>Next Task</span>
-              <ArrowRight className="w-3.5 h-3.5" />
+              <ArrowRight className="w-3.5 h-3.5 shrink-0" />
             </button>
           )}
         </div>
       </div>
 
       {/* Main Workspace 2-Column Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left Column: Code Files Editor / Preview (7 cols) */}
-        <div className="lg:col-span-7 space-y-4">
-          <div className="bg-slate-950 rounded-2xl border border-slate-800 overflow-hidden shadow-2xl">
+        <div className="lg:col-span-7 space-y-4 min-w-0">
+          <div className="bg-slate-950 rounded-2xl border border-slate-800 overflow-hidden shadow-2xl min-w-0">
             {/* File Tabs */}
             <div className="bg-slate-900/90 px-3 py-2 border-b border-slate-800 flex items-center space-x-1 overflow-x-auto">
               {projectFiles.map(file => {
@@ -200,10 +273,10 @@ export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
                         : 'text-slate-400 hover:text-slate-200'
                     }`}
                   >
-                    <FileCode className={`w-3.5 h-3.5 ${isTarget ? 'text-rose-400' : 'text-indigo-400'}`} />
+                    <FileCode className={`w-3.5 h-3.5 shrink-0 ${isTarget ? 'text-rose-400' : 'text-indigo-400'}`} />
                     <span>{file.filePath}</span>
                     {isTarget && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500 ml-1" title="Target File for this Task" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500 ml-1 shrink-0" title="Target File for this Task" />
                     )}
                   </button>
                 );
@@ -211,13 +284,13 @@ export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
             </div>
 
             {/* Code Content */}
-            <div className="p-4 max-h-[550px] overflow-auto font-mono text-xs text-slate-300 leading-relaxed bg-slate-950">
+            <div className="p-3 sm:p-4 max-h-[550px] overflow-auto font-mono text-xs text-slate-300 leading-relaxed bg-slate-950">
               {activeFile ? (
                 <div className="space-y-0.5">
                   {activeFile.content.split('\n').map((line, idx) => (
                     <div key={idx} className="flex items-start hover:bg-slate-900/60 rounded px-1.5 py-0.5">
-                      <span className="w-8 select-none text-slate-600 text-right pr-3">{idx + 1}</span>
-                      <span className="flex-1 whitespace-pre-wrap break-all">{line || ' '}</span>
+                      <span className="w-8 shrink-0 select-none text-slate-600 text-right pr-3">{idx + 1}</span>
+                      <span className="flex-1 min-w-0 whitespace-pre-wrap break-all">{line || ' '}</span>
                     </div>
                   ))}
                 </div>
@@ -229,13 +302,13 @@ export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
 
           {/* Diff Viewer if proposed changes exist */}
           {proposedChanges.length > 0 && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2">
+            <div className="space-y-3 min-w-0">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                <div className="flex flex-wrap items-center gap-2 min-w-0">
                   <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
                     Proposed Code Changes ({proposedChanges.length})
                   </span>
-                  <div className="flex space-x-1">
+                  <div className="flex flex-wrap gap-1">
                     {proposedChanges.map(p => (
                       <button
                         key={p.filePath}
@@ -254,7 +327,7 @@ export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
 
                 <button
                   onClick={handleApplyAllChanges}
-                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs px-3.5 py-1.5 rounded-lg shadow-sm transition"
+                  className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs px-3.5 py-1.5 rounded-lg shadow-sm transition shrink-0"
                 >
                   Apply All Changes
                 </button>
@@ -282,12 +355,12 @@ export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
         </div>
 
         {/* Right Column: AI Assistant & Real Verification (5 cols) */}
-        <div className="lg:col-span-5 space-y-5">
+        <div className="lg:col-span-5 space-y-5 min-w-0">
           {/* AI Code Engine Assistant Card */}
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl space-y-4 min-w-0">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-800">
               <div className="flex items-center space-x-2 text-white font-bold text-sm">
-                <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-amber-500 to-rose-500 flex items-center justify-center shadow-sm">
+                <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-amber-500 to-rose-500 flex items-center justify-center shadow-sm shrink-0">
                   <Sparkles className="w-4 h-4 text-white" />
                 </div>
                 <span>Gemini Autonomous Code Engine</span>
@@ -300,7 +373,7 @@ export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
             {/* Explanation or Prompt */}
             {aiExplanation ? (
               <div className="space-y-3">
-                <div className="bg-slate-950/80 p-4 rounded-xl border border-slate-800 text-xs text-slate-200 leading-relaxed whitespace-pre-wrap max-h-60 overflow-y-auto font-sans">
+                <div className="bg-slate-950/80 p-4 rounded-xl border border-slate-800 text-xs text-slate-200 leading-relaxed whitespace-pre-wrap break-words max-h-60 overflow-y-auto font-sans">
                   {aiExplanation}
                 </div>
                 <div className="flex items-center space-x-2">
@@ -315,14 +388,14 @@ export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
               </div>
             ) : (
               <div className="text-center py-6 space-y-3">
-                <p className="text-xs text-slate-400 leading-relaxed">
+                <p className="text-xs text-slate-400 leading-relaxed break-words">
                   The Autonomous Code Engine will inspect <strong>{currentTask.targetFiles?.join(', ') || 'the project files'}</strong>,
                   find the root cause of the bug or missing requirement, and write the complete corrected code.
                 </p>
                 <button
                   onClick={() => handleDiagnoseTask()}
                   disabled={isDiagnosing}
-                  className="bg-gradient-to-r from-amber-600 to-rose-600 hover:from-amber-500 hover:to-rose-500 text-white font-bold text-xs px-5 py-2.5 rounded-xl shadow-lg shadow-rose-500/20 transition transform hover:-translate-y-0.5"
+                  className="w-full sm:w-auto bg-gradient-to-r from-amber-600 to-rose-600 hover:from-amber-500 hover:to-rose-500 text-white font-bold text-xs px-5 py-2.5 rounded-xl shadow-lg shadow-rose-500/20 transition transform hover:-translate-y-0.5"
                 >
                   <Sparkles className="w-4 h-4 inline-block mr-1.5" />
                   <span>{isDiagnosing ? 'Analyzing Codebase...' : 'Diagnose & Propose Solution'}</span>
@@ -342,12 +415,12 @@ export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
                     handleDiagnoseTask(userCustomPrompt);
                   }
                 }}
-                className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                className="flex-1 min-w-0 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
               />
               <button
                 onClick={() => handleDiagnoseTask(userCustomPrompt)}
                 disabled={isDiagnosing || !userCustomPrompt.trim()}
-                className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white p-2 rounded-xl transition"
+                className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white p-2 rounded-xl transition shrink-0"
               >
                 <Send className="w-4 h-4" />
               </button>
@@ -355,32 +428,32 @@ export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
           </div>
 
           {/* Real Verification Card */}
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl space-y-4 min-w-0">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-800">
               <div className="flex items-center space-x-2 text-white font-bold text-sm">
-                <Terminal className="w-4 h-4 text-emerald-400" />
+                <Terminal className="w-4 h-4 text-emerald-400 shrink-0" />
                 <span>Isolated Code Verification</span>
               </div>
               <button
                 onClick={handleRunVerification}
                 disabled={isVerifying}
-                className="flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3.5 py-1.5 rounded-lg shadow-sm transition disabled:opacity-50"
+                className="w-full sm:w-auto flex items-center justify-center space-x-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3.5 py-1.5 rounded-lg shadow-sm transition disabled:opacity-50"
               >
-                <Play className="w-3.5 h-3.5" />
+                <Play className="w-3.5 h-3.5 shrink-0" />
                 <span>{isVerifying ? 'Running Checks...' : 'Run Real Verification'}</span>
               </button>
             </div>
 
             {/* Test command note */}
             {currentTask.testCommand && (
-              <div className="text-[11px] font-mono text-slate-400 bg-slate-950 p-2 rounded-lg border border-slate-800">
+              <div className="text-[11px] font-mono text-slate-400 bg-slate-950 p-2 rounded-lg border border-slate-800 break-all sm:break-words">
                 <span className="text-slate-500">Target Rule:</span> {currentTask.testCommand}
               </div>
             )}
 
             {/* Verification Results Console */}
             {verificationResult ? (
-              <div className="space-y-3">
+              <div className="space-y-3 min-w-0">
                 <div
                   className={`p-3 rounded-xl border flex items-center space-x-2.5 text-xs font-semibold ${
                     verificationResult.status === 'passed'
@@ -402,12 +475,12 @@ export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
                 </div>
 
                 {/* Real Stdout/Stderr Console Box */}
-                <div className="bg-black/90 p-3 rounded-xl font-mono text-[11px] leading-relaxed max-h-52 overflow-y-auto text-slate-300 border border-slate-800">
-                  <div className="text-slate-500 mb-1">$ /engine/run-verification --isolate --ast --manifest</div>
+                <div className="bg-black/90 p-3 rounded-xl font-mono text-[11px] leading-relaxed max-h-52 overflow-auto text-slate-300 border border-slate-800">
+                  <div className="text-slate-500 mb-1 break-all">$ /engine/run-verification --isolate --ast --manifest</div>
                   {verificationResult.stdout.split('\n').map((line, i) => (
                     <div
                       key={i}
-                      className={
+                      className={`break-words ${
                         line.startsWith('✔')
                           ? 'text-emerald-400'
                           : line.startsWith('✖')
@@ -415,13 +488,13 @@ export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
                           : line.startsWith('ℹ')
                           ? 'text-sky-400'
                           : 'text-slate-400'
-                      }
+                      }`}
                     >
                       {line}
                     </div>
                   ))}
                   {verificationResult.stderr && (
-                    <div className="text-rose-400 mt-2 font-bold whitespace-pre-wrap">
+                    <div className="text-rose-400 mt-2 font-bold whitespace-pre-wrap break-words">
                       {verificationResult.stderr}
                     </div>
                   )}
@@ -437,7 +510,7 @@ export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
                     }
                     className="w-full bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 font-semibold text-xs py-2 rounded-xl transition flex items-center justify-center space-x-1.5"
                   >
-                    <RotateCcw className="w-3.5 h-3.5" />
+                    <RotateCcw className="w-3.5 h-3.5 shrink-0" />
                     <span>Have AI Diagnose & Fix This Failure</span>
                   </button>
                 )}

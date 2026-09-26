@@ -1,6 +1,6 @@
 import { Router, Response } from 'express';
 import { eq, and, desc } from 'drizzle-orm';
-import { getDb } from '../db/index.ts';
+import { getDb, testNeonConnection } from '../db/index.ts';
 import {
   projects,
   projectFiles,
@@ -9,12 +9,65 @@ import {
   verificationRuns,
   auditLogs,
 } from '../db/schema.ts';
-import { requireAuth, AuthRequest } from '../middleware/auth.ts';
+import { getOrCreateUser, getUserByUid } from '../db/users.ts';
+import { requireAuth, requireStrictFirebaseAuth, AuthRequest } from '../middleware/auth.ts';
 import { analyzeCodebaseWithGemini, diagnoseAndProposeCodeFix } from './gemini.ts';
 import { runRealCodeVerification } from './verifier.ts';
 import { fetchGitHubRepository } from './github.ts';
+import { isCloudinaryConfigured, uploadSnapshotToCloudinaryFree } from './cloudinary.ts';
 
 export const apiRouter = Router();
+
+// Neon PostgreSQL + Drizzle ORM live health & connection check
+apiRouter.get('/db-status', async (_req, res: Response) => {
+  try {
+    const info = await testNeonConnection();
+    return res.json(info);
+  } catch (error: any) {
+    return res.status(503).json({
+      connected: false,
+      error: error.message || 'Neon PostgreSQL connection failed.',
+    });
+  }
+});
+
+// 0. Firebase Authentication Sync & Profile Endpoints (Strictly Protected by Firebase ID Token)
+apiRouter.post('/auth/sync', requireStrictFirebaseAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const { uid, email, displayName, photoUrl } = req.user!;
+    const bodyName = req.body?.displayName || displayName;
+    const dbUser = await getOrCreateUser(
+      uid,
+      email || 'user@firebase.auth',
+      bodyName || null,
+      photoUrl || null
+    );
+    return res.json({
+      authenticated: true,
+      user: dbUser,
+    });
+  } catch (error: any) {
+    console.error('Error syncing authenticated user:', error);
+    return res.status(500).json({ error: error.message || 'Failed to sync user.' });
+  }
+});
+
+apiRouter.get('/auth/me', requireStrictFirebaseAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const { uid, email, displayName, photoUrl } = req.user!;
+    let dbUser = await getUserByUid(uid);
+    if (!dbUser) {
+      dbUser = await getOrCreateUser(uid, email || 'user@firebase.auth', displayName || null, photoUrl || null);
+    }
+    return res.json({
+      authenticated: true,
+      user: dbUser,
+    });
+  } catch (error: any) {
+    console.error('Error fetching authenticated user:', error);
+    return res.status(500).json({ error: error.message || 'Failed to fetch user profile.' });
+  }
+});
 
 // 1. List user projects (Protected & Ownership-scoped)
 apiRouter.get('/projects', requireAuth, async (req: AuthRequest, res: Response) => {
@@ -155,10 +208,10 @@ apiRouter.delete('/projects/:id', requireAuth, async (req: AuthRequest, res: Res
 
     await db.insert(auditLogs).values({
       id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      projectId: id,
+      projectId: null,
       userId,
       action: 'PROJECT_DELETED',
-      details: 'User deleted project and cascading sub-records.',
+      details: `User deleted project ${id} and cascading sub-records.`,
     });
 
     return res.json({ success: true, message: 'Project deleted successfully.' });
@@ -225,12 +278,24 @@ apiRouter.post('/projects/:id/analyze', requireAuth, async (req: AuthRequest, re
       return res.status(400).json({ error: 'No files found in database for this project.' });
     }
 
-    // Call real Gemini analysis
+    // Mark project as actively analyzing
+    await db
+      .update(projects)
+      .set({
+        status: 'analyzing',
+        updatedAt: new Date(),
+      })
+      .where(eq(projects.id, id));
+
+    // Call real Gemini analysis (includes automatic server-side exponential backoff)
     const analysis = await analyzeCodebaseWithGemini({
       title: project.title,
       requirements: project.requirementsText || '',
       files: files.map((f: any) => ({ filePath: f.filePath, content: f.content })),
     });
+
+    // Replace any previous report for this project
+    await db.delete(analysisReports).where(eq(analysisReports.projectId, id));
 
     const reportId = `report-${Date.now()}`;
     await db.insert(analysisReports).values({
@@ -253,6 +318,8 @@ apiRouter.post('/projects/:id/analyze', requireAuth, async (req: AuthRequest, re
     const initialTasks = [];
     for (let i = 0; i < analysis.rescuePlanTasks.length; i++) {
       const t = analysis.rescuePlanTasks[i];
+      const rawCmd = (t.testCommand || '').trim();
+      const safeTestCmd = rawCmd === 'npx esbuild' ? '' : rawCmd;
       const taskRecord = {
         id: `task-${i}-${Date.now()}`,
         projectId: id,
@@ -264,7 +331,7 @@ apiRouter.post('/projects/:id/analyze', requireAuth, async (req: AuthRequest, re
         description: t.description,
         targetFilesJson: JSON.stringify(t.targetFiles || []),
         estimatedMinutes: t.estimatedMinutes || 15,
-        testCommand: t.testCommand || 'npx esbuild',
+        testCommand: safeTestCmd,
         isVerified: false,
       };
       await db.insert(rescueTasks).values(taskRecord);
@@ -303,7 +370,33 @@ apiRouter.post('/projects/:id/analyze', requireAuth, async (req: AuthRequest, re
     });
   } catch (error: any) {
     console.error('Error analyzing project:', error);
-    return res.status(500).json({ error: error.message || 'Analysis failed.' });
+    try {
+      const db = await getDb();
+      const { id } = req.params;
+      const existingReports = await db
+        .select()
+        .from(analysisReports)
+        .where(eq(analysisReports.projectId, id));
+
+      if (existingReports.length === 0) {
+        await db
+          .update(projects)
+          .set({
+            status: 'failed',
+            updatedAt: new Date(),
+          })
+          .where(eq(projects.id, id));
+      }
+    } catch (dbErr) {
+      console.warn('Failed to update project status after analysis error:', dbErr);
+    }
+
+    const statusCode = error.statusCode || 503;
+    return res.status(statusCode).json({
+      error: error.message || 'Analysis failed due to temporary Gemini API unavailability.',
+      retryable: error.retryable ?? true,
+      attemptsMade: error.attemptsMade || 4,
+    });
   }
 });
 
@@ -450,7 +543,12 @@ apiRouter.post('/projects/:id/tasks/:taskId/ai-fix', requireAuth, async (req: Au
     return res.json(solution);
   } catch (error: any) {
     console.error('Error generating AI fix:', error);
-    return res.status(500).json({ error: error.message || 'AI diagnosis failed.' });
+    const statusCode = error.statusCode || 503;
+    return res.status(statusCode).json({
+      error: error.message || 'AI diagnosis failed due to temporary Gemini API unavailability.',
+      retryable: error.retryable ?? true,
+      attemptsMade: error.attemptsMade || 4,
+    });
   }
 });
 
@@ -638,15 +736,66 @@ apiRouter.post('/projects/:id/tasks/:taskId/verify', requireAuth, async (req: Au
 // 12. GitHub Import (Protected)
 apiRouter.post('/projects/github-import', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
-    const { repoUrl, branch } = req.body;
+    const { repoUrl, branch, githubToken } = req.body;
     if (!repoUrl) {
       return res.status(400).json({ error: 'GitHub repository URL or owner/repo is required.' });
     }
 
-    const repoData = await fetchGitHubRepository(repoUrl, branch);
+    const repoData = await fetchGitHubRepository(repoUrl, branch, githubToken);
     return res.json(repoData);
   } catch (error: any) {
     console.error('Error importing from GitHub:', error);
     return res.status(400).json({ error: error.message || 'Failed to import repository from GitHub.' });
+  }
+});
+
+// 13. Optional Cloudinary Free Tier Rescue Snapshot Archive (Protected)
+apiRouter.post('/projects/:id/cloud-archive', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const db = await getDb();
+    const userId = req.user!.uid;
+    const { id } = req.params;
+
+    const projResult = await db
+      .select()
+      .from(projects)
+      .where(and(eq(projects.id, id), eq(projects.ownerId, userId)));
+
+    if (projResult.length === 0) {
+      return res.status(404).json({ error: 'Project not found or unauthorized.' });
+    }
+
+    if (!isCloudinaryConfigured()) {
+      return res.status(400).json({
+        error:
+          'Cloudinary Free Tier is optional and not configured in environment variables (CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET). Use local ZIP download instead.',
+      });
+    }
+
+    const project = projResult[0];
+    const files = await db.select().from(projectFiles).where(eq(projectFiles.projectId, id));
+    const tasks = await db.select().from(rescueTasks).where(eq(rescueTasks.projectId, id));
+
+    const snapshotPayload = JSON.stringify(
+      {
+        project,
+        files,
+        tasks,
+        exportedAt: new Date().toISOString(),
+      },
+      null,
+      2
+    );
+
+    const uploadResult = await uploadSnapshotToCloudinaryFree(
+      id,
+      `${project.title.replace(/[^a-zA-Z0-9_-]/g, '_')}_snapshot.json`,
+      snapshotPayload
+    );
+
+    return res.json(uploadResult);
+  } catch (error: any) {
+    console.error('Error archiving to Cloudinary Free Tier:', error);
+    return res.status(500).json({ error: error.message || 'Failed to archive snapshot to Cloudinary Free Tier.' });
   }
 });

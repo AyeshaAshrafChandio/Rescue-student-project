@@ -1,131 +1,122 @@
-import fs from 'fs';
-import { PGlite } from '@electric-sql/pglite';
-import { drizzle } from 'drizzle-orm/pglite';
-import * as schema from './schema.ts';
+import 'dotenv/config';
 import path from 'path';
+import { drizzle, NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { migrate } from 'drizzle-orm/node-postgres/migrator';
+import pg from 'pg';
+import * as schema from './schema.ts';
+
+const { Pool } = pg;
 
 declare global {
-  var _pgliteInstance: PGlite | undefined;
-  var _drizzleDb: any | undefined;
+  var _neonPostgresPool: pg.Pool | undefined;
+  var _neonDrizzleDb: NodePgDatabase<typeof schema> | undefined;
+  var _neonMigrated: boolean | undefined;
+  var _neonMigrationPromise: Promise<void> | undefined;
+  var _neonConnectionUrl: string | undefined;
 }
 
-// Persist data in a dedicated directory in the container
-const DB_DIR = path.resolve(process.cwd(), '.postgres_data');
-
-export async function getDb() {
-  if (!global._drizzleDb) {
-    if (!global._pgliteInstance) {
-      // Clear any stale postmaster.pid left over from ungraceful container termination
-      const pidFile = path.join(DB_DIR, 'postmaster.pid');
-      if (fs.existsSync(pidFile)) {
-        try {
-          fs.unlinkSync(pidFile);
-        } catch {}
-      }
-
-      global._pgliteInstance = new PGlite(DB_DIR);
-      await global._pgliteInstance.waitReady;
+export function getDatabaseUrl(): string {
+  const url = process.env.DATABASE_URL?.trim();
+  if (!url) {
+    throw new Error(
+      'DATABASE_URL environment variable is missing. Please set DATABASE_URL to your Neon PostgreSQL connection string.'
+    );
+  }
+  try {
+    const parsed = new URL(url);
+    const sslMode = parsed.searchParams.get('sslmode');
+    if (
+      (sslMode === 'require' || sslMode === 'prefer' || sslMode === 'verify-ca') &&
+      !parsed.searchParams.has('uselibpqcompat')
+    ) {
+      parsed.searchParams.set('uselibpqcompat', 'true');
     }
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
 
-    // Auto-bootstrap schema tables in PostgreSQL
-    await global._pgliteInstance.exec(`
-      CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        uid TEXT NOT NULL UNIQUE,
-        email TEXT NOT NULL,
-        display_name TEXT,
-        photo_url TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
-      );
+export const createPool = (): pg.Pool => {
+  const connectionString = getDatabaseUrl();
 
-      CREATE TABLE IF NOT EXISTS projects (
-        id TEXT PRIMARY KEY,
-        owner_id TEXT NOT NULL,
-        title TEXT NOT NULL,
-        description TEXT,
-        source_type TEXT NOT NULL,
-        repo_url TEXT,
-        github_branch TEXT,
-        requirements_text TEXT,
-        target_tech_stack TEXT,
-        deadline TEXT,
-        health_score INTEGER DEFAULT 0 NOT NULL,
-        progress_percent INTEGER DEFAULT 0 NOT NULL,
-        status TEXT DEFAULT 'created' NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS project_files (
-        id TEXT PRIMARY KEY,
-        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-        file_path TEXT NOT NULL,
-        content TEXT NOT NULL,
-        size INTEGER DEFAULT 0 NOT NULL,
-        language TEXT,
-        is_modified BOOLEAN DEFAULT FALSE NOT NULL,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS analysis_reports (
-        id TEXT PRIMARY KEY,
-        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-        tech_detected TEXT NOT NULL,
-        requirements_summary TEXT,
-        health_score INTEGER NOT NULL,
-        overall_summary TEXT NOT NULL,
-        features_done_json TEXT NOT NULL,
-        features_broken_json TEXT NOT NULL,
-        features_missing_json TEXT NOT NULL,
-        features_unverifiable_json TEXT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS rescue_tasks (
-        id TEXT PRIMARY KEY,
-        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-        task_order INTEGER NOT NULL,
-        title TEXT NOT NULL,
-        category TEXT NOT NULL,
-        priority TEXT NOT NULL,
-        status TEXT DEFAULT 'pending' NOT NULL,
-        description TEXT NOT NULL,
-        target_files_json TEXT,
-        estimated_minutes INTEGER DEFAULT 15 NOT NULL,
-        test_command TEXT NOT NULL,
-        root_cause_analysis TEXT,
-        proposed_changes_json TEXT,
-        verification_output TEXT,
-        is_verified BOOLEAN DEFAULT FALSE NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS verification_runs (
-        id TEXT PRIMARY KEY,
-        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-        task_id TEXT NOT NULL,
-        status TEXT NOT NULL,
-        passed_checks_json TEXT,
-        failed_checks_json TEXT,
-        stdout TEXT,
-        stderr TEXT,
-        duration_ms INTEGER DEFAULT 0 NOT NULL,
-        checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS audit_logs (
-        id TEXT PRIMARY KEY,
-        project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
-        user_id TEXT NOT NULL,
-        action TEXT NOT NULL,
-        details TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
-      );
-    `);
-
-    global._drizzleDb = drizzle(global._pgliteInstance, { schema });
+  // Recreate pool if DATABASE_URL changed
+  if (global._neonPostgresPool && global._neonConnectionUrl !== connectionString) {
+    global._neonPostgresPool.end().catch(() => {});
+    global._neonPostgresPool = undefined;
+    global._neonDrizzleDb = undefined;
+    global._neonMigrated = false;
+    global._neonMigrationPromise = undefined;
   }
 
-  return global._drizzleDb;
+  if (!global._neonPostgresPool) {
+    global._neonConnectionUrl = connectionString;
+    global._neonPostgresPool = new Pool({
+      connectionString,
+      ssl: { rejectUnauthorized: false },
+      max: 10,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 15000,
+    });
+
+    global._neonPostgresPool.on('error', (err) => {
+      console.error('Unexpected error on Neon PostgreSQL pool client:', err);
+    });
+  }
+
+  return global._neonPostgresPool;
+};
+
+export async function getDb(): Promise<NodePgDatabase<typeof schema>> {
+  const pool = createPool();
+
+  if (!global._neonDrizzleDb) {
+    global._neonDrizzleDb = drizzle(pool, { schema });
+  }
+
+  if (!global._neonMigrated) {
+    if (!global._neonMigrationPromise) {
+      const migrationsFolder = path.resolve(process.cwd(), 'drizzle');
+      global._neonMigrationPromise = migrate(global._neonDrizzleDb, { migrationsFolder })
+        .then(() => {
+          global._neonMigrated = true;
+        })
+        .catch((err) => {
+          global._neonMigrationPromise = undefined;
+          throw err;
+        });
+    }
+    await global._neonMigrationPromise;
+  }
+
+  return global._neonDrizzleDb;
+}
+
+export async function testNeonConnection(): Promise<{
+  connected: boolean;
+  database: string;
+  user: string;
+  version: string;
+  tables: string[];
+}> {
+  const db = await getDb();
+  const pool = createPool();
+
+  const metaRes = await pool.query(
+    `SELECT current_database() AS database, current_user AS user, version() AS version`
+  );
+  const tablesRes = await pool.query(
+    `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name`
+  );
+
+  // Verify Drizzle ORM query execution on schema
+  await db.select().from(schema.users).limit(1);
+
+  return {
+    connected: true,
+    database: metaRes.rows[0]?.database || 'neondb',
+    user: metaRes.rows[0]?.user || 'neon',
+    version: metaRes.rows[0]?.version || 'PostgreSQL',
+    tables: tablesRes.rows.map((r: any) => r.table_name),
+  };
 }

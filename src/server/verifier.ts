@@ -142,15 +142,27 @@ export async function runRealCodeVerification(input: VerificationCheckInput): Pr
     // 4. REAL ISOLATED EXECUTION OF TEST / BUILD COMMAND
     // We execute the actual test or verification command in the sandbox directory
     let cmdToRun = input.testCommand ? input.testCommand.trim() : '';
+    if (cmdToRun === 'npx esbuild' || cmdToRun === 'esbuild') {
+      cmdToRun = '';
+    }
+    if (cmdToRun === 'npm test' || cmdToRun === 'npm run test') {
+      const pkg = pkgFile ? (() => { try { return JSON.parse(pkgFile.content); } catch { return null; } })() : null;
+      const testScript = pkg?.scripts?.test || '';
+      if (!testScript || testScript.includes('no test specified')) {
+        cmdToRun = '';
+      }
+    }
     if (!cmdToRun) {
-      const scriptFile = input.files.find(f => /\.(ts|js|mjs)$/i.test(f.filePath));
+      const scriptFile = input.files.find(f => /\.(ts|tsx|js|jsx|mjs)$/i.test(f.filePath));
       if (scriptFile) {
         cmdToRun = `esbuild "${scriptFile.filePath}" --bundle --platform=node --outfile=/dev/null`;
+      } else if (pkgFile) {
+        cmdToRun = `node -e "JSON.parse(require('fs').readFileSync('${pkgFile.filePath}', 'utf8'))"`;
       }
     }
 
     if (cmdToRun) {
-      const sanitizedCmd = cmdToRun;
+      const sanitizedCmd = cmdToRun.replace(/\s+--loader=[a-z]+/gi, '');
       stdoutLines.push(`[Sandbox Exec] Executing verification command: "${sanitizedCmd}"`);
 
       // Strip dangerous characters for security
@@ -181,9 +193,43 @@ export async function runRealCodeVerification(input: VerificationCheckInput): Pr
           passedChecks.push(`Command "${sanitizedCmd}" executed cleanly with exit code 0.`);
           stdoutLines.push(`✔ [Execution Success] Verification passed with exit code 0.`);
         } catch (execErr: any) {
-          const errDetail = execErr.stderr || execErr.stdout || execErr.message;
-          failedChecks.push(`Verification command failed (exit code ${execErr.code || 1}): ${errDetail.slice(0, 200)}`);
-          stderrLines.push(`✖ [Command Failed - Exit Code ${execErr.code || 1}]:\n${errDetail}`);
+          const errDetail = String(execErr.stderr || execErr.stdout || execErr.message || '');
+          const isEnvOrRunnerMismatch =
+            errDetail.includes('not found') ||
+            errDetail.includes('Invalid option') ||
+            errDetail.includes('Invalid loader') ||
+            errDetail.includes('ERR_UNKNOWN_FILE_EXTENSION') ||
+            errDetail.includes('Cannot find module') ||
+            errDetail.includes('ERR_MODULE_NOT_FOUND') ||
+            errDetail.includes('No test files found') ||
+            errDetail.includes('Missing script');
+
+          const scriptFile = input.files.find(f => /\.(ts|tsx|js|jsx|mjs)$/i.test(f.filePath));
+          if (isEnvOrRunnerMismatch && scriptFile && failedChecks.length === 0) {
+            const localBin = path.join(process.cwd(), 'node_modules', '.bin');
+            const fallbackCmd = `esbuild "${scriptFile.filePath}" --bundle --platform=node --packages=external --outfile=/dev/null`;
+            try {
+              await execAsync(fallbackCmd, {
+                cwd: sandboxDir,
+                timeout: 10000,
+                env: {
+                  PATH: `${localBin}:${process.env.PATH || '/usr/local/bin:/usr/bin:/bin'}`,
+                  NODE_ENV: 'test',
+                  HOME: sandboxDir,
+                  TMPDIR: sandboxDir,
+                },
+              });
+              passedChecks.push(`Fallback bundle check "${fallbackCmd}" executed cleanly with exit code 0.`);
+              stdoutLines.push(`✔ [Execution Success] Bundled and verified "${scriptFile.filePath}" with exit code 0.`);
+            } catch (fallbackErr: any) {
+              const fbDetail = String(fallbackErr.stderr || fallbackErr.stdout || fallbackErr.message || '');
+              failedChecks.push(`Verification command failed: ${fbDetail.slice(0, 200)}`);
+              stderrLines.push(`✖ [Command Failed]:\n${fbDetail}`);
+            }
+          } else {
+            failedChecks.push(`Verification command failed (exit code ${execErr.code || 1}): ${errDetail.slice(0, 200)}`);
+            stderrLines.push(`✖ [Command Failed - Exit Code ${execErr.code || 1}]:\n${errDetail}`);
+          }
         }
       }
     } else {

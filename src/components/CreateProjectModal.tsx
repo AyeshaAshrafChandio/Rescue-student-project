@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
-import { X, Upload, Github, Sparkles, AlertCircle, FileCode, CheckCircle2, Clock } from 'lucide-react';
+import { X, Upload, Github, Sparkles, AlertCircle, CheckCircle2, KeyRound } from 'lucide-react';
 import { extractZipFile } from '../lib/zip-utils.ts';
+import { importFromGithub } from '../lib/project-service.ts';
+import { useAuth } from '../context/AuthContext.tsx';
 import { Project, ProjectFile } from '../types/index.ts';
 
 interface CreateProjectModalProps {
@@ -14,6 +16,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   onClose,
   onProjectCreated,
 }) => {
+  const { getIdToken } = useAuth();
   const [sourceType, setSourceType] = useState<'zip' | 'github'>('zip');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -21,6 +24,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   const [requirements, setRequirements] = useState('');
   const [repoUrl, setRepoUrl] = useState('');
   const [githubBranch, setGithubBranch] = useState('main');
+  const [githubToken, setGithubToken] = useState('');
 
   const [extractedFiles, setExtractedFiles] = useState<Array<{ filePath: string; content: string; size: number }>>([]);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -56,18 +60,13 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     setErrorMsg(null);
     setIsProcessing(true);
     try {
-      const res = await fetch('/api/projects/github-import', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repoUrl, branch: githubBranch || 'main' }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to import GitHub repository.');
-      }
-
-      const data = await res.json();
+      const token = await getIdToken();
+      const data = await importFromGithub(
+        repoUrl,
+        githubBranch || 'main',
+        token,
+        githubToken.trim() || undefined
+      );
       setExtractedFiles(data.files);
       if (!title) {
         setTitle(data.repoName.split('/')[1] || data.repoName);
@@ -132,32 +131,36 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl my-8">
+    <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl my-4 sm:my-8">
         {/* Header */}
-        <div className="bg-slate-950/80 px-6 py-4 border-b border-slate-800 flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 rounded-lg bg-rose-500/20 text-rose-400 flex items-center justify-center font-bold">
+        <div className="bg-slate-950/80 px-4 sm:px-6 py-4 border-b border-slate-800 flex items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center space-x-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-rose-500/20 text-rose-400 flex items-center justify-center font-bold shrink-0">
               +
             </div>
-            <div>
-              <h2 className="text-lg font-bold text-white">Rescue Incomplete Student Project</h2>
-              <p className="text-xs text-slate-400">Ingest real codebase & compare against course requirements</p>
+            <div className="min-w-0">
+              <h2 className="text-base sm:text-lg font-bold text-white leading-snug">
+                Rescue Incomplete Student Project
+              </h2>
+              <p className="text-xs text-slate-400">
+                Ingest real codebase & compare against course requirements
+              </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition"
+            className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition shrink-0"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Form Body */}
-        <form onSubmit={handleCreateSubmit} className="p-6 space-y-5">
+        <form onSubmit={handleCreateSubmit} className="p-4 sm:p-6 space-y-5">
           {errorMsg && (
-            <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl text-rose-400 text-xs flex items-center space-x-2">
-              <AlertCircle className="w-4 h-4 shrink-0" />
+            <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl text-rose-400 text-xs flex items-start space-x-2 break-words">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
               <span>{errorMsg}</span>
             </div>
           )}
@@ -167,7 +170,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
             <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
               Project Source
             </label>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3">
               <button
                 type="button"
                 onClick={() => setSourceType('zip')}
@@ -177,7 +180,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                     : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700'
                 }`}
               >
-                <Upload className="w-4 h-4 text-indigo-400" />
+                <Upload className="w-4 h-4 text-indigo-400 shrink-0" />
                 <span>Upload ZIP File</span>
               </button>
 
@@ -190,7 +193,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                     : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700'
                 }`}
               >
-                <Github className="w-4 h-4 text-indigo-400" />
+                <Github className="w-4 h-4 text-indigo-400 shrink-0" />
                 <span>GitHub Repository</span>
               </button>
             </div>
@@ -198,7 +201,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
 
           {/* Source Input Area */}
           {sourceType === 'zip' ? (
-            <div className="border-2 border-dashed border-slate-700/80 hover:border-indigo-500/80 rounded-2xl p-6 text-center transition bg-slate-950/30">
+            <div className="border-2 border-dashed border-slate-700/80 hover:border-indigo-500/80 rounded-2xl p-5 sm:p-6 text-center transition bg-slate-950/30">
               <input
                 type="file"
                 accept=".zip"
@@ -219,7 +222,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
               </label>
             </div>
           ) : (
-            <div className="space-y-3 bg-slate-950/40 p-4 rounded-xl border border-slate-800">
+            <div className="space-y-3 bg-slate-950/40 p-3.5 sm:p-4 rounded-xl border border-slate-800">
               <div>
                 <label className="block text-xs font-medium text-slate-300 mb-1">
                   GitHub Repository (URL or owner/repo)
@@ -232,7 +235,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
                 />
               </div>
-              <div className="flex space-x-3">
+              <div className="flex flex-col sm:flex-row gap-3">
                 <div className="flex-1">
                   <label className="block text-xs font-medium text-slate-300 mb-1">Branch</label>
                   <input
@@ -243,12 +246,27 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                     className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
                   />
                 </div>
+                <div className="flex-1">
+                  <label className="block text-xs font-medium text-slate-300 mb-1">
+                    Free GitHub Token (Optional)
+                  </label>
+                  <div className="relative">
+                    <KeyRound className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" />
+                    <input
+                      type="password"
+                      placeholder="ghp_... (5,000 req/hr)"
+                      value={githubToken}
+                      onChange={(e) => setGithubToken(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-8 pr-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                </div>
                 <div className="flex items-end">
                   <button
                     type="button"
                     onClick={handleFetchGitHub}
                     disabled={isProcessing}
-                    className="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs px-4 py-2.5 rounded-lg transition"
+                    className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs px-4 py-2.5 rounded-lg transition"
                   >
                     {isProcessing ? 'Fetching Tree...' : 'Fetch Codebase'}
                   </button>
@@ -310,20 +328,20 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
           </div>
 
           {/* Action Footer */}
-          <div className="flex items-center justify-end space-x-3 pt-4 border-t border-slate-800">
+          <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2.5 sm:gap-3 pt-4 border-t border-slate-800">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-lg text-xs font-medium text-slate-400 hover:text-white transition"
+              className="px-4 py-2.5 sm:py-2 rounded-lg text-xs font-medium text-slate-400 hover:text-white transition text-center"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isProcessing || extractedFiles.length === 0}
-              className="flex items-center space-x-2 bg-gradient-to-r from-rose-600 to-indigo-600 hover:from-rose-500 hover:to-indigo-500 text-white font-semibold text-xs px-5 py-2.5 rounded-lg shadow-lg shadow-rose-500/20 transition disabled:opacity-50"
+              className="flex items-center justify-center space-x-2 bg-gradient-to-r from-rose-600 to-indigo-600 hover:from-rose-500 hover:to-indigo-500 text-white font-semibold text-xs px-5 py-2.5 rounded-lg shadow-lg shadow-rose-500/20 transition disabled:opacity-50"
             >
-              <Sparkles className="w-4 h-4" />
+              <Sparkles className="w-4 h-4 shrink-0" />
               <span>{isProcessing ? 'Analyzing Codebase...' : 'Begin Deep Rescue Analysis'}</span>
             </button>
           </div>

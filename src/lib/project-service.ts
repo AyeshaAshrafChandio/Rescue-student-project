@@ -3,17 +3,22 @@ import {
   ProjectFile,
   AnalysisReport,
   RescueTask,
-  VerificationRun,
 } from '../types/index.ts';
 
-// Client session ID for guest students who have not yet signed in with Google
+export interface RetryStatusInfo {
+  attempt: number;
+  maxAttempts: number;
+  delayMs: number;
+  message: string;
+}
+
+let runtimeClientId: string | null = null;
+
 function getClientSessionId(): string {
-  let id = sessionStorage.getItem('spr_student_session_id');
-  if (!id) {
-    id = `student-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    sessionStorage.setItem('spr_student_session_id', id);
+  if (!runtimeClientId) {
+    runtimeClientId = `student-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   }
-  return id;
+  return runtimeClientId;
 }
 
 function getAuthHeaders(token?: string | null): Record<string, string> {
@@ -27,6 +32,83 @@ function getAuthHeaders(token?: string | null): Record<string, string> {
   }
 
   return headers;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isRetryableStatusOrMessage(status: number, errorText: string, retryableFlag?: boolean): boolean {
+  if (retryableFlag === true) return true;
+  if ([429, 500, 502, 503, 504].includes(status)) return true;
+  const lower = (errorText || '').toLowerCase();
+  return (
+    lower.includes('503') ||
+    lower.includes('unavailable') ||
+    lower.includes('high demand') ||
+    lower.includes('overloaded') ||
+    lower.includes('429') ||
+    lower.includes('rate limit') ||
+    lower.includes('quota') ||
+    lower.includes('temporarily') ||
+    lower.includes('network') ||
+    lower.includes('failed to fetch')
+  );
+}
+
+async function fetchWithExponentialBackoff<T>(
+  url: string,
+  options: RequestInit,
+  defaultErrorMsg: string,
+  onRetryStatus?: (info: RetryStatusInfo) => void,
+  maxAttempts = 3,
+  baseDelayMs = 2000
+): Promise<T> {
+  let lastError: Error = new Error(defaultErrorMsg);
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetch(url, options);
+      if (res.ok) {
+        return (await res.json()) as T;
+      }
+
+      const data = await res.json().catch(() => ({}));
+      const errMessage = data.error || defaultErrorMsg;
+      const retryable = isRetryableStatusOrMessage(res.status, errMessage, data.retryable);
+
+      lastError = new Error(errMessage);
+
+      if (!retryable || attempt === maxAttempts) {
+        break;
+      }
+    } catch (netErr: any) {
+      lastError = new Error(netErr?.message || defaultErrorMsg);
+      if (attempt === maxAttempts) {
+        break;
+      }
+    }
+
+    const exponentialDelay = baseDelayMs * Math.pow(2, attempt - 1);
+    const jitter = Math.floor(Math.random() * 500);
+    const delayMs = Math.min(10000, exponentialDelay + jitter);
+    const seconds = Math.max(1, Math.round(delayMs / 1000));
+
+    if (onRetryStatus) {
+      onRetryStatus({
+        attempt,
+        maxAttempts,
+        delayMs,
+        message: `Gemini API is experiencing high demand (503 UNAVAILABLE) — automatically retrying with exponential backoff (Attempt ${
+          attempt + 1
+        } of ${maxAttempts} in ${seconds}s)...`,
+      });
+    }
+
+    await sleep(delayMs);
+  }
+
+  throw lastError;
 }
 
 // 1. Fetch user projects from real PostgreSQL backend
@@ -99,22 +181,23 @@ export async function fetchProjectFiles(projectId: string, token?: string | null
   return await res.json();
 }
 
-// 5. Run Deep Gemini Analysis and store in PostgreSQL
+// 5. Run Deep Gemini Analysis and store in PostgreSQL (with automatic exponential backoff)
 export async function runProjectAnalysis(
   projectId: string,
-  token?: string | null
+  token?: string | null,
+  onRetryStatus?: (info: RetryStatusInfo) => void
 ): Promise<{ report: AnalysisReport; tasks: RescueTask[] }> {
-  const res = await fetch(`/api/projects/${projectId}/analyze`, {
-    method: 'POST',
-    headers: getAuthHeaders(token),
-  });
-
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data.error || 'Codebase analysis failed.');
-  }
-
-  return await res.json();
+  return fetchWithExponentialBackoff<{ report: AnalysisReport; tasks: RescueTask[] }>(
+    `/api/projects/${projectId}/analyze`,
+    {
+      method: 'POST',
+      headers: getAuthHeaders(token),
+    },
+    'Codebase analysis failed due to temporary Gemini API high demand.',
+    onRetryStatus,
+    3,
+    2000
+  );
 }
 
 // 6. Fetch Analysis Report from PostgreSQL
@@ -145,30 +228,36 @@ export async function fetchRescueTasks(projectId: string, token?: string | null)
   return await res.json();
 }
 
-// 8. Request AI Code Diagnosis & Replacement (Gemini Autonomous Code Engine)
+// 8. Request AI Code Diagnosis & Replacement (with automatic exponential backoff)
 export async function requestAiFixForTask(
   projectId: string,
   taskId: string,
   userMessage?: string,
-  token?: string | null
+  token?: string | null,
+  onRetryStatus?: (info: RetryStatusInfo) => void
 ): Promise<{
   explanation: string;
   rootCause: string;
   proposedChanges: Array<{ filePath: string; description: string; newContent: string }>;
   verificationAdvice: string;
 }> {
-  const res = await fetch(`/api/projects/${projectId}/tasks/${taskId}/ai-fix`, {
-    method: 'POST',
-    headers: getAuthHeaders(token),
-    body: JSON.stringify({ userMessage }),
-  });
-
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data.error || 'AI Code Diagnosis failed.');
-  }
-
-  return await res.json();
+  return fetchWithExponentialBackoff<{
+    explanation: string;
+    rootCause: string;
+    proposedChanges: Array<{ filePath: string; description: string; newContent: string }>;
+    verificationAdvice: string;
+  }>(
+    `/api/projects/${projectId}/tasks/${taskId}/ai-fix`,
+    {
+      method: 'POST',
+      headers: getAuthHeaders(token),
+      body: JSON.stringify({ userMessage }),
+    },
+    'AI Code Diagnosis failed due to temporary Gemini API high demand.',
+    onRetryStatus,
+    3,
+    2000
+  );
 }
 
 // 9. Apply proposed changes safely in PostgreSQL backend
@@ -216,21 +305,58 @@ export async function verifyTaskInSandbox(
   return await res.json();
 }
 
-// 11. Import from GitHub
+// 11. Import from GitHub (Free GitHub REST + Raw API)
 export async function importFromGithub(
   repoUrl: string,
   branch = 'main',
-  token?: string | null
-): Promise<{ files: Array<{ filePath: string; content: string; size: number }>; repoName: string; defaultBranch: string }> {
+  token?: string | null,
+  githubToken?: string
+): Promise<{
+  files: Array<{ filePath: string; content: string; size: number }>;
+  repoName: string;
+  defaultBranch: string;
+  rateLimitRemaining?: number;
+}> {
   const res = await fetch('/api/projects/github-import', {
     method: 'POST',
     headers: getAuthHeaders(token),
-    body: JSON.stringify({ repoUrl, branch }),
+    body: JSON.stringify({ repoUrl, branch, githubToken }),
   });
 
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error || 'GitHub import failed.');
+  }
+
+  return await res.json();
+}
+
+// 12. Verify Firebase ID Token & Sync Authenticated User in PostgreSQL Backend
+export async function syncAuthenticatedUser(
+  token: string,
+  displayName?: string | null
+): Promise<{
+  authenticated: boolean;
+  user: {
+    id: number;
+    uid: string;
+    email: string;
+    displayName?: string | null;
+    photoUrl?: string | null;
+  };
+}> {
+  const res = await fetch('/api/auth/sync', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ displayName }),
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to verify Firebase token with backend.');
   }
 
   return await res.json();

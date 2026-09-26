@@ -1,13 +1,25 @@
 import React from 'react';
+import { ProjectStatus } from '../types/index.ts';
 
 interface HealthGaugeProps {
   score: number;
   size?: 'sm' | 'md' | 'lg';
   label?: string;
+  status?: ProjectStatus;
 }
 
-export const HealthGauge: React.FC<HealthGaugeProps> = ({ score, size = 'md', label = 'Project Health' }) => {
+export const HealthGauge: React.FC<HealthGaugeProps> = ({
+  score,
+  size = 'md',
+  label = 'Project Health',
+  status,
+}) => {
+  const isAnalyzing = status === 'analyzing' || status === 'created';
+  const isUnanalyzedOrFailed = status === 'failed' || (!isAnalyzing && score <= 0);
+
   const getScoreColor = (val: number) => {
+    if (isAnalyzing) return 'text-indigo-400 stroke-indigo-500';
+    if (isUnanalyzedOrFailed) return 'text-amber-400 stroke-amber-500';
     if (val >= 85) return 'text-emerald-400 stroke-emerald-500';
     if (val >= 70) return 'text-sky-400 stroke-sky-500';
     if (val >= 50) return 'text-amber-400 stroke-amber-500';
@@ -15,6 +27,8 @@ export const HealthGauge: React.FC<HealthGaugeProps> = ({ score, size = 'md', la
   };
 
   const getGrade = (val: number) => {
+    if (isAnalyzing) return 'Gemini AST Scan...';
+    if (isUnanalyzedOrFailed) return 'Pending Analysis';
     if (val >= 90) return 'A (Submission Ready)';
     if (val >= 80) return 'B (Good Condition)';
     if (val >= 70) return 'C (Needs Work)';
@@ -22,28 +36,46 @@ export const HealthGauge: React.FC<HealthGaugeProps> = ({ score, size = 'md', la
     return 'F (Critical Fail)';
   };
 
-  const radius = 38;
+  const radius = size === 'sm' ? 32 : size === 'lg' ? 42 : 38;
+  const svgDim = size === 'sm' ? 84 : size === 'lg' ? 116 : 104;
+  const center = svgDim / 2;
+  const strokeWidth = size === 'sm' ? 7 : 9;
   const circumference = 2 * Math.PI * radius;
-  const strokeDashoffset = circumference - (Math.min(100, Math.max(0, score)) / 100) * circumference;
+
+  const displayFillPercent = isAnalyzing
+    ? 35
+    : isUnanalyzedOrFailed
+    ? 20
+    : Math.min(100, Math.max(0, score));
+  const strokeDashoffset = circumference - (displayFillPercent / 100) * circumference;
 
   return (
-    <div className="flex flex-col items-center justify-center p-4 bg-slate-900/80 rounded-2xl border border-slate-800 shadow-inner">
+    <div
+      className={`flex flex-col items-center justify-center bg-slate-900/80 rounded-2xl border border-slate-800 shadow-inner ${
+        size === 'sm' ? 'p-3' : 'p-4'
+      }`}
+    >
       <div className="relative flex items-center justify-center">
-        <svg className="w-28 h-28 transform -rotate-90">
+        <svg
+          width={svgDim}
+          height={svgDim}
+          viewBox={`0 0 ${svgDim} ${svgDim}`}
+          className={`transform -rotate-90 shrink-0 ${isAnalyzing ? 'animate-spin' : ''}`}
+        >
           <circle
-            cx="56"
-            cy="56"
+            cx={center}
+            cy={center}
             r={radius}
             className="stroke-slate-800"
-            strokeWidth="9"
+            strokeWidth={strokeWidth}
             fill="transparent"
           />
           <circle
-            cx="56"
-            cy="56"
+            cx={center}
+            cy={center}
             r={radius}
             className={`transition-all duration-1000 ease-out ${getScoreColor(score)}`}
-            strokeWidth="9"
+            strokeWidth={strokeWidth}
             strokeDasharray={circumference}
             strokeDashoffset={strokeDashoffset}
             strokeLinecap="round"
@@ -51,10 +83,16 @@ export const HealthGauge: React.FC<HealthGaugeProps> = ({ score, size = 'md', la
           />
         </svg>
         <div className="absolute flex flex-col items-center justify-center text-center">
-          <span className={`text-2xl font-black font-mono tracking-tight ${getScoreColor(score)}`}>
-            {score}%
+          <span
+            className={`font-black font-mono tracking-tight ${
+              size === 'sm' ? 'text-base' : size === 'lg' ? 'text-2xl' : 'text-xl'
+            } ${getScoreColor(score)}`}
+          >
+            {isAnalyzing ? 'SCAN' : isUnanalyzedOrFailed ? '—' : `${score}%`}
           </span>
-          <span className="text-[10px] uppercase font-bold text-slate-400">Score</span>
+          <span className="text-[10px] uppercase font-bold text-slate-400">
+            {isAnalyzing ? 'Active' : isUnanalyzedOrFailed ? 'Pending' : 'Score'}
+          </span>
         </div>
       </div>
       <div className="mt-2 text-center">
