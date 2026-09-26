@@ -1,0 +1,6 @@
+{
+  "name": "Student Project Rescue",
+  "description": "Rescue your student software project before the deadline with real repository analysis, prioritized rescue plans, AI workspace, diff review, and real build and test verification.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
