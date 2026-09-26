@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import path from 'path';
-import { drizzle, NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import pg from 'pg';
 import * as schema from './schema.ts';

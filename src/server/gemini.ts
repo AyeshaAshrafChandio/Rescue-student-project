@@ -1,14 +1,29 @@
 import { GoogleGenAI, Type, ThinkingLevel } from '@google/genai';
 
-// Initialize Gemini SDK on the server side
-export const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
-    },
-  },
-});
+let _aiClient: GoogleGenAI | null = null;
+
+export function getAiClient(): GoogleGenAI {
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
+  if (!apiKey) {
+    throw new GeminiServiceError(
+      'GEMINI_API_KEY environment variable is missing on the server.',
+      500,
+      false,
+      1
+    );
+  }
+  if (!_aiClient) {
+    _aiClient = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
+    });
+  }
+  return _aiClient;
+}
 
 export class GeminiServiceError extends Error {
   statusCode: number;
@@ -83,6 +98,7 @@ async function callGeminiWithExponentialBackoff<T>(
       const thinkingLevel =
         model === 'gemini-3.1-flash-lite' ? ThinkingLevel.MINIMAL : ThinkingLevel.LOW;
 
+      const ai = getAiClient();
       const response = await ai.models.generateContent({
         model: req.model,
         contents: req.contents,

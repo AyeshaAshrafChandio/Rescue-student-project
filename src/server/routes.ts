@@ -1,4 +1,4 @@
-import { Router, Response } from 'express';
+import { Router, type Response } from 'express';
 import { eq, and, desc } from 'drizzle-orm';
 import { getDb, testNeonConnection } from '../db/index.ts';
 import {
@@ -10,7 +10,7 @@ import {
   auditLogs,
 } from '../db/schema.ts';
 import { getOrCreateUser, getUserByUid } from '../db/users.ts';
-import { requireAuth, requireStrictFirebaseAuth, AuthRequest } from '../middleware/auth.ts';
+import { requireAuth, requireStrictFirebaseAuth, type AuthRequest } from '../middleware/auth.ts';
 import { analyzeCodebaseWithGemini, diagnoseAndProposeCodeFix } from './gemini.ts';
 import { runRealCodeVerification } from './verifier.ts';
 import { fetchGitHubRepository } from './github.ts';
