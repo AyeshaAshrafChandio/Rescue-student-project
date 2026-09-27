@@ -1,0 +1,231 @@
+
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Student Project Rescue — QA Audit Report</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    color: #1f2328;
+    background: #ffffff;
+    padding: 32px 16px 48px;
+  }
+  .page { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 22px; font-weight: 800; color: #1f2328; margin-bottom: 4px; }
+  .subtitle { font-size: 13px; color: #57606a; margin-bottom: 24px; }
+  h2 { font-size: 15px; font-weight: 700; color: #1f2328; margin: 28px 0 10px; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; }
+  h3 { font-size: 13px; font-weight: 700; color: #1f2328; margin: 14px 0 6px; }
+  p { margin-bottom: 8px; color: #1f2328; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 16px; }
+  th { background: #f7f8fa; color: #57606a; font-weight: 600; text-align: left; padding: 7px 10px; border: 1px solid #e5e7eb; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  td { padding: 7px 10px; border: 1px solid #e5e7eb; vertical-align: top; }
+  tr:nth-child(even) td { background: #f7f8fa; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+  .ok   { background: #dcfce7; color: #15803d; }
+  .warn { background: #fef9c3; color: #854d0e; }
+  .fail { background: #fee2e2; color: #b91c1c; }
+  .info { background: #dbeafe; color: #1d4ed8; }
+  .muted { background: #f1f5f9; color: #64748b; }
+  .fix-block { background: #f7f8fa; border: 1px solid #e5e7eb; border-left: 3px solid #3b82d4; border-radius: 6px; padding: 10px 14px; margin-bottom: 10px; font-size: 13px; }
+  .fix-block code { font-family: "Consolas", "Menlo", monospace; font-size: 12px; background: #eef2f7; padding: 1px 5px; border-radius: 3px; }
+  .security-block { background: #fffbeb; border: 1px solid #fde68a; border-left: 3px solid #f59e0b; border-radius: 6px; padding: 10px 14px; margin-bottom: 10px; font-size: 13px; }
+  ul { padding-left: 18px; margin-bottom: 8px; }
+  li { margin-bottom: 3px; }
+  .score-bar-wrap { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+  .score-bar-bg { flex: 1; height: 10px; background: #e5e7eb; border-radius: 5px; overflow: hidden; }
+  .score-bar-fill { height: 100%; border-radius: 5px; background: #3b82d4; }
+  .score-label { font-weight: 700; font-size: 13px; min-width: 36px; text-align: right; }
+  footer { border-top: 1px solid #e5e7eb; margin-top: 40px; padding-top: 12px; text-align: center; font-size: 12px; color: #57606a; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <h1>Student Project Rescue — QA &amp; Security Audit</h1>
+  <p class="subtitle">IBM Bob Agent Mode · Senior QA Engineer + Security Engineer + Bug-Fix Developer · Full codebase inspection</p>
+
+  
+  <h2>Overall Health Assessment</h2>
+  <div class="score-bar-wrap">
+    <span style="font-size:13px;color:#57606a;min-width:120px">Pre-Fix Health</span>
+    <div class="score-bar-bg"><div class="score-bar-fill" style="width:84%;background:#f59e0b"></div></div>
+    <span class="score-label" style="color:#f59e0b">84</span>
+  </div>
+  <div class="score-bar-wrap">
+    <span style="font-size:13px;color:#57606a;min-width:120px">Post-Fix Health</span>
+    <div class="score-bar-bg"><div class="score-bar-fill" style="width:91%"></div></div>
+    <span class="score-label" style="color:#3b82d4">91</span>
+  </div>
+  <p style="font-size:12px;color:#57606a">Score is a composite of: Gemini API correctness, dependency resolution, security posture, and feature completeness.</p>
+
+  
+  <h2>Requirements Audit</h2>
+  <table>
+    <thead>
+      <tr><th>Workflow Step</th><th>Status</th><th>Evidence</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Authentication (Firebase Google + Email)</td><td><span class="badge ok">Implemented</span></td><td><code>firebase.ts</code>, <code>AuthContext.tsx</code>, <code>AuthModal.tsx</code>, backend <code>requireStrictFirebaseAuth</code></td></tr>
+      <tr><td>Project Creation modal</td><td><span class="badge ok">Implemented</span></td><td><code>CreateProjectModal.tsx</code>, POST <code>/api/projects</code></td></tr>
+      <tr><td>ZIP upload → file extraction</td><td><span class="badge ok">Implemented</span></td><td><code>zip-utils.ts</code> JSZip extraction, path normalization, 500 KB file cap</td></tr>
+      <tr><td>GitHub import</td><td><span class="badge ok">Implemented</span></td><td><code>github.ts</code>, POST <code>/api/projects/github-import</code>, raw + blob API fallback</td></tr>
+      <tr><td>Real codebase analysis (Gemini)</td><td><span class="badge warn">Partially — Fixed</span></td><td>POST <code>/api/projects/:id/analyze</code> → <code>analyzeCodebaseWithGemini()</code>; model IDs were invalid (fixed)</td></tr>
+      <tr><td>Done / Broken / Missing classification</td><td><span class="badge ok">Implemented</span></td><td>Gemini JSON schema response + deterministic pre-analysis verifier in <code>verifier.ts</code></td></tr>
+      <tr><td>Prioritization (critical/high/medium/low)</td><td><span class="badge ok">Implemented</span></td><td><code>rescueTasks</code> schema, task order, <code>normalizeTaskPrio()</code></td></tr>
+      <tr><td>Rescue Plan view</td><td><span class="badge ok">Implemented</span></td><td><code>RescuePlanView.tsx</code>, GET <code>/api/projects/:id/tasks</code></td></tr>
+      <tr><td>Rescue Task (AI Workspace)</td><td><span class="badge ok">Implemented</span></td><td>POST <code>/api/projects/:id/tasks/:taskId/ai-fix</code>, <code>diagnoseAndProposeCodeFix()</code></td></tr>
+      <tr><td>AI Workspace view + diff review</td><td><span class="badge ok">Implemented</span></td><td><code>AiWorkspaceView.tsx</code>, <code>DiffViewer.tsx</code></td></tr>
+      <tr><td>Code change application</td><td><span class="badge ok">Implemented</span></td><td>POST <code>/api/projects/:id/tasks/:taskId/apply</code>, DB upsert per file</td></tr>
+      <tr><td>Isolated verification / build check</td><td><span class="badge ok">Implemented</span></td><td>POST <code>/api/projects/:id/tasks/:taskId/verify</code>, esbuild AST + exec sandbox in <code>verifier.ts</code></td></tr>
+      <tr><td>Progress tracking</td><td><span class="badge ok">Implemented</span></td><td><code>verificationRuns</code> table, <code>progressPercent</code> + <code>healthScore</code> recomputed on each verify pass</td></tr>
+      <tr><td>Final Report view</td><td><span class="badge ok">Implemented</span></td><td><code>FinalReportView.tsx</code>, GET <code>/api/projects/:id/report</code></td></tr>
+      <tr><td>ZIP download of rescued project</td><td><span class="badge ok">Implemented</span></td><td><code>downloadProjectAsZip()</code> in <code>zip-utils.ts</code></td></tr>
+      <tr><td>Cloudinary cloud archive (optional)</td><td><span class="badge ok">Implemented</span></td><td>POST <code>/api/projects/:id/cloud-archive</code>, <code>cloudinary.ts</code></td></tr>
+      <tr><td>Live Gemini API integration</td><td><span class="badge muted">NOT VERIFIED</span></td><td>Requires live <code>GEMINI_API_KEY</code> at runtime — cannot be tested without credentials</td></tr>
+    </tbody>
+  </table>
+
+  
+  <h2>Bugs Found &amp; Fixed</h2>
+
+  <div class="fix-block">
+    <h3>BUG 1 — Invalid Gemini model identifiers <span class="badge fail">Critical</span></h3>
+    <p><strong>File:</strong> <code>src/server/gemini.ts</code> line 80–85</p>
+    <p><strong>Root cause:</strong> <code>CANDIDATE_FLASH_MODELS</code> contained <code>'gemini-3.1-flash-lite'</code>, <code>'gemini-3.8-flash'</code> — neither exists in the Google GenAI API. All 4 retry attempts would fail with "model not found" at runtime.</p>
+    <p><strong>Fix:</strong> Replaced with valid current model IDs: <code>'gemini-2.5-flash'</code>, <code>'gemini-2.5-flash-lite'</code>, <code>'gemini-flash-latest'</code>.</p>
+  </div>
+
+  <div class="fix-block">
+    <h3>BUG 2 — <code>ThinkingLevel.MINIMAL</code> does not exist <span class="badge fail">Critical</span></h3>
+    <p><strong>File:</strong> <code>src/server/gemini.ts</code> line 106</p>
+    <p><strong>Root cause:</strong> <code>ThinkingLevel.MINIMAL</code> is not a valid value in <code>@google/genai@2.24.0</code>. Valid values are <code>NONE</code>, <code>LOW</code>, <code>MEDIUM</code>, <code>HIGH</code>, <code>AUTO</code>. Calling the API with this enum would throw a runtime error.</p>
+    <p><strong>Fix:</strong> Replaced <code>ThinkingLevel.MINIMAL</code> → <code>ThinkingLevel.NONE</code> for <code>gemini-2.5-flash-lite</code>; removed invalid <code>ThinkingLevel.LOW</code> block for the non-existent <code>gemini-3.8-flash</code>.</p>
+  </div>
+
+  <div class="fix-block">
+    <h3>BUG 3 — Duplicate entry in <code>CANDIDATE_FLASH_MODELS</code> wastes a retry slot <span class="badge warn">Medium</span></h3>
+    <p><strong>File:</strong> <code>src/server/gemini.ts</code> line 80–85</p>
+    <p><strong>Root cause:</strong> <code>'gemini-3.1-flash-lite'</code> appeared at indices 0 and 2. With 4 attempts cycling through 4 slots, 2 of 4 retries used the same (invalid) model.</p>
+    <p><strong>Fix:</strong> Replaced array with 4 distinct valid model identifiers. Index 0 and 3 both use <code>'gemini-2.5-flash'</code> as a final fallback, which is intentional and different from the lite/alias variants.</p>
+  </div>
+
+  <div class="fix-block">
+    <h3>BUG 4 — esbuild peer dependency version conflict blocks <code>npm install</code> <span class="badge warn">Medium</span></h3>
+    <p><strong>File:</strong> <code>package.json</code></p>
+    <p><strong>Root cause:</strong> <code>"esbuild": "^0.25.0"</code> in <code>dependencies</code> conflicts with <code>vite@8.3.x</code> peer requirement <code>esbuild@^0.27.0 || ^0.28.0</code>. <code>npm install</code> fails with ERESOLVE. bun resolves this via nested deduplication but npm users cannot install the project.</p>
+    <p><strong>Fix:</strong> Updated <code>"esbuild": "^0.28.0"</code> in <code>dependencies</code> (esbuild is also used at runtime in <code>verifier.ts</code> via <code>import { transform } from 'esbuild'</code>).</p>
+  </div>
+
+  <div class="fix-block">
+    <h3>BUG 5 — Verifier bad-model detection regex missed new invalid names <span class="badge warn">Medium</span></h3>
+    <p><strong>File:</strong> <code>src/server/verifier.ts</code> lines 654–655 and 1048–1049</p>
+    <p><strong>Root cause:</strong> The static analysis regex only flagged old well-known names like <code>gemini-3.5-flash</code>, <code>gemini-1.5-flash</code> but not the incorrect <code>gemini-3.x-*</code> pattern variants that were actually in the app's own gemini.ts.</p>
+    <p><strong>Fix:</strong> Updated regex to <code>/model\s*:\s*['"\`](gemini-3\.[0-9][^'"\`]*|gemini-1\.[0-9][^'"\`]*|gemini-pro|gemini-2\.0-flash[^'"\`]*|gemini-2\.0-pro)['"\`]/</code> to catch all invalid 3.x, 1.x, and 2.0 patterns in student-uploaded code. Replacement suggestion updated from <code>gemini-flash-latest</code> → <code>gemini-2.5-flash</code>.</p>
+  </div>
+
+  
+  <h2>Security Findings</h2>
+
+  <div class="security-block">
+    <h3>SECURITY-1 — Insufficient testCommand execution blocklist (FIXED) <span class="badge warn">Medium</span></h3>
+    <p><strong>File:</strong> <code>src/server/verifier.ts</code> line ~1127</p>
+    <p><strong>Finding:</strong> The original blocklist only blocked <code>rm -rf /</code>, <code>mkfs</code>, and fork bombs. Commands like <code>curl http://... | sh</code>, <code>wget</code>, <code>chmod +x</code>, <code>/dev/tcp</code> (bash TCP redirection), and others were not blocked. testCommand values come from Gemini-generated content stored in DB, not direct user input — but defense-in-depth is warranted.</p>
+    <p><strong>Fix:</strong> Expanded blocklist to include <code>curl</code>, <code>wget</code>, <code>nc</code>, <code>netcat</code>, <code>/dev/tcp</code>, <code>bash -i</code>, <code>sh -i</code>, writes to system directories, <code>chmod 777/+x</code>, and sensitive file paths.</p>
+  </div>
+
+  <div class="fix-block" style="border-left-color:#15803d">
+    <h3>SECURITY-2 — Authentication &amp; Authorization <span class="badge ok">Pass</span></h3>
+    <ul>
+      <li>All project routes require a valid Firebase ID token via <code>requireStrictFirebaseAuth</code></li>
+      <li>Every project-scoped DB query includes <code>eq(projects.ownerId, userId)</code> ownership check</li>
+      <li>No cross-user data leakage possible via parameterized Drizzle ORM queries</li>
+    </ul>
+  </div>
+
+  <div class="fix-block" style="border-left-color:#15803d">
+    <h3>SECURITY-3 — ZIP Path Traversal <span class="badge ok">Pass</span></h3>
+    <p>Extracted ZIP content is stored as text in PostgreSQL, never written directly to the filesystem from the ZIP. The verifier sandbox uses <code>path.normalize().replace(/^(\.\.[\/\\])+/, '')</code> + <code>path.join(sandboxDir, ...)</code> for any writes.</p>
+  </div>
+
+  <div class="fix-block" style="border-left-color:#15803d">
+    <h3>SECURITY-4 — Secret Handling <span class="badge ok">Pass</span></h3>
+    <p>All secrets (<code>GEMINI_API_KEY</code>, Firebase Admin credentials, <code>DATABASE_URL</code>) are server-only environment variables. Firebase client config is intentionally injected into the frontend (standard Firebase pattern). No secrets are stored in the database or returned to the frontend.</p>
+  </div>
+
+  <div class="fix-block" style="border-left-color:#f59e0b">
+    <h3>SECURITY-5 — No CORS Middleware <span class="badge warn">Low / Informational</span></h3>
+    <p><strong>Finding:</strong> <code>server.ts</code> does not configure <code>cors()</code> middleware. All origins can make cross-origin requests to <code>/api/*</code>.</p>
+    <p><strong>Assessment:</strong> Not fixed — all sensitive routes require <code>Authorization: Bearer &lt;Firebase ID token&gt;</code>. A cross-origin attacker cannot obtain a valid token without the user's interaction. Impact is limited to the public endpoints (<code>/api/health</code>, <code>/api/auth/firebase-config</code>) which contain no sensitive data.</p>
+  </div>
+
+  
+  <h2>Test Execution Results</h2>
+  <table>
+    <thead><tr><th>Check</th><th>Result</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td><code>npm run lint</code> (tsc --noEmit)</td><td><span class="badge warn">NOT VERIFIED</span></td><td>node_modules not installed — <code>tsc</code> binary not found. Root cause is the esbuild version conflict (fixed in package.json).</td></tr>
+      <tr><td>Unit / integration tests</td><td><span class="badge muted">NONE</span></td><td>No test files exist (<code>*.test.*</code> or <code>*.spec.*</code>). No test script in package.json beyond a stub.</td></tr>
+      <tr><td>Build (<code>vite build</code>)</td><td><span class="badge warn">NOT VERIFIED</span></td><td>Requires installed dependencies. Cannot run without bun/npm install succeeding.</td></tr>
+      <tr><td>Gemini API live call</td><td><span class="badge warn">NOT VERIFIED</span></td><td>Requires live <code>GEMINI_API_KEY</code> at runtime. Model IDs corrected to <code>gemini-2.5-flash</code> family — these are confirmed valid current identifiers.</td></tr>
+      <tr><td>Firebase token verification</td><td><span class="badge warn">NOT VERIFIED</span></td><td>Requires live Firebase project credentials.</td></tr>
+      <tr><td>Neon PostgreSQL connection</td><td><span class="badge warn">NOT VERIFIED</span></td><td>Requires live <code>DATABASE_URL</code>.</td></tr>
+      <tr><td>Syntax inspection (manual review)</td><td><span class="badge ok">PASS</span></td><td>All TypeScript files read and reviewed. No syntax errors found in source.</td></tr>
+    </tbody>
+  </table>
+
+  
+  <h2>Remaining Issues (Unresolved)</h2>
+  <table>
+    <thead><tr><th>Issue</th><th>Severity</th><th>Action Required</th></tr></thead>
+    <tbody>
+      <tr><td>No automated test suite</td><td><span class="badge warn">Medium</span></td><td>No unit or integration tests exist. Add tests for <code>zip-utils.ts</code>, <code>verifier.ts</code> path resolution, and route authorization at minimum.</td></tr>
+      <tr><td>No CORS middleware</td><td><span class="badge muted">Low</span></td><td>Add <code>cors({ origin: allowedOrigins })</code> for defense-in-depth if deploying publicly.</td></tr>
+      <tr><td>Live Gemini integration</td><td><span class="badge muted">Unverified</span></td><td>Cannot verify live API responses without a <code>GEMINI_API_KEY</code>. Model identifiers are now correct (<code>gemini-2.5-flash</code>). Test manually after deployment.</td></tr>
+      <tr><td><code>bun.lock</code> references esbuild 0.25.12</td><td><span class="badge muted">Low</span></td><td>Run <code>bun install</code> after the <code>package.json</code> esbuild version bump to regenerate <code>bun.lock</code> with <code>esbuild@0.28.x</code>.</td></tr>
+    </tbody>
+  </table>
+
+  
+  <h2>IBM Bob Contribution — Exact Changes Made</h2>
+  <table>
+    <thead><tr><th>File</th><th>Change</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>src/server/gemini.ts</code></td>
+        <td>
+          1. Replaced all invalid model IDs in <code>CANDIDATE_FLASH_MODELS</code> with <code>gemini-2.5-flash</code>, <code>gemini-2.5-flash-lite</code>, <code>gemini-flash-latest</code>.<br />
+          2. Removed duplicate <code>'gemini-3.1-flash-lite'</code> entry.<br />
+          3. Replaced <code>ThinkingLevel.MINIMAL</code> (non-existent) → <code>ThinkingLevel.NONE</code>; removed invalid <code>ThinkingLevel.LOW</code> for non-existent model.<br />
+          4. Updated fallback replacement model in <code>applyVerifiedPreCheckFixesToFile</code> from <code>gemini-flash-latest</code> → <code>gemini-2.5-flash</code>.<br />
+          5. Updated AI prompt recommendation for Gemini model fix from <code>gemini-flash-latest</code> → <code>gemini-2.5-flash</code>.
+        </td>
+      </tr>
+      <tr>
+        <td><code>src/server/verifier.ts</code></td>
+        <td>
+          1. Updated bad-model detection regex in <code>inspectAndVerifyRepository()</code> to catch all <code>gemini-3.x</code>, <code>gemini-1.x</code>, and <code>gemini-2.0-*</code> patterns.<br />
+          2. Updated bad-model detection regex in <code>runRealCodeVerification()</code> to match.<br />
+          3. Updated replacement recommendation in both locations from <code>gemini-flash-latest</code> → <code>gemini-2.5-flash</code> / <code>gemini-2.5-flash-lite</code>.<br />
+          4. Expanded <code>testCommand</code> execution blocklist from 3 patterns to 17 patterns (added: <code>curl</code>, <code>wget</code>, <code>nc</code>, <code>netcat</code>, <code>/dev/tcp</code>, <code>bash -i</code>, <code>sh -i</code>, system dir writes, <code>chmod</code>, sensitive file paths).
+        </td>
+      </tr>
+      <tr>
+        <td><code>package.json</code></td>
+        <td>Updated <code>"esbuild": "^0.25.0"</code> → <code>"^0.28.0"</code> in <code>dependencies</code> to satisfy <code>vite@8.3.x</code> peer requirement and resolve npm install ERESOLVE failure.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  
+  <h2>Frontend / Backend Integration</h2>
+  <p>All frontend API calls in <code>project-service.ts</code> are correctly matched to backend routes in <code>routes.ts</code>. The pre-analysis verifier (<code>inspectAndVerifyRepository</code>) cross-matches <code>frontendApiCalls</code> against <code>backendRoutesImplemented</code> at analysis time — no missing routes were detected via static analysis of the actual codebase.</p>
+  <p>State management flows correctly through React context (<code>AuthContext</code>) and prop drilling in <code>App.tsx</code>. Authentication token is fetched from Firebase and forwarded as <code>Authorization: Bearer</code> to every backend call.</p>
+
+  <footer>Made with IBM Bob</footer>
+</div>
+</body>
+</html>

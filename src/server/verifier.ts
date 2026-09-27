@@ -652,16 +652,16 @@ export async function inspectAndVerifyRepository(
 
         // Check for non-existent/deprecated Gemini model strings in code
         const badModelMatch = lineText.match(
-          /model\s*:\s*['"`](gemini-3\.5-flash|gemini-1\.5-flash|gemini-1\.5-pro|gemini-pro|gemini-2\.0-flash|gemini-2\.0-pro|gemini-2\.0-flash-thinking)['"`]/
+          /model\s*:\s*['"`](gemini-3\.[0-9][^'"`]*|gemini-1\.[0-9][^'"`]*|gemini-pro|gemini-2\.0-flash[^'"`]*|gemini-2\.0-pro)['"`]/
         );
         if (badModelMatch) {
           runtimeAndSdkIssues.push({
             filePath: file.filePath,
             line: lineNum,
-            issue: `Invalid or unsupported Gemini model identifier "${badModelMatch[1]}" will fail at runtime when calling the Google GenAI API (replace with "gemini-2.5-flash" or "gemini-flash-latest").`,
+            issue: `Invalid or unsupported Gemini model identifier "${badModelMatch[1]}" will fail at runtime when calling the Google GenAI API (replace with "gemini-2.5-flash" or "gemini-2.5-flash-lite").`,
             evidence: `${file.filePath}:${lineNum} -> ${trimmed}`,
             invalidValue: badModelMatch[1],
-            replacementValue: 'gemini-flash-latest',
+            replacementValue: 'gemini-2.5-flash',
           });
         }
       });
@@ -1046,7 +1046,7 @@ export async function runRealCodeVerification(
           const trimmed = lineText.trim();
           if (trimmed.startsWith('//') || trimmed.startsWith('*')) return;
           const badModelMatch = lineText.match(
-            /model\s*:\s*['"`](gemini-3\.5-flash|gemini-1\.5-flash|gemini-1\.5-pro|gemini-pro|gemini-2\.0-flash|gemini-2\.0-pro|gemini-2\.0-flash-thinking)['"`]/
+            /model\s*:\s*['"`](gemini-3\.[0-9][^'"`]*|gemini-1\.[0-9][^'"`]*|gemini-pro|gemini-2\.0-flash[^'"`]*|gemini-2\.0-pro)['"`]/
           );
           if (badModelMatch) {
             sdkIssuesCount++;
@@ -1054,7 +1054,7 @@ export async function runRealCodeVerification(
               `Invalid Gemini model identifier "${badModelMatch[1]}" at ${file.filePath}:${idx + 1}`
             );
             stderrLines.push(
-              `✖ [Runtime SDK Error] ${file.filePath}:${idx + 1} uses invalid model "${badModelMatch[1]}". Replace with "gemini-2.5-flash" or "gemini-flash-latest".`
+              `✖ [Runtime SDK Error] ${file.filePath}:${idx + 1} uses invalid model "${badModelMatch[1]}". Replace with "gemini-2.5-flash" or "gemini-2.5-flash-lite".`
             );
           }
         });
@@ -1124,11 +1124,26 @@ export async function runRealCodeVerification(
       const sanitizedCmd = cmdToRun.replace(/\s+--loader=[a-z]+/gi, '');
       stdoutLines.push(`[Sandbox Exec] Executing verification command: "${sanitizedCmd}"`);
 
-      if (
-        sanitizedCmd.includes('rm -rf /') ||
-        sanitizedCmd.includes('mkfs') ||
-        sanitizedCmd.includes(':(){ :|:& };:')
-      ) {
+      const BLOCKED_PATTERNS = [
+        'rm -rf /',
+        'mkfs',
+        ':(){ :|:& };:',
+        'curl ',
+        'wget ',
+        'nc ',
+        'netcat',
+        '/dev/tcp',
+        'bash -i',
+        'sh -i',
+        '> /etc/',
+        '> /usr/',
+        '> /bin/',
+        'chmod 777',
+        'chmod +x',
+        '/etc/passwd',
+        '/etc/shadow',
+      ];
+      if (BLOCKED_PATTERNS.some((p) => sanitizedCmd.includes(p))) {
         failedChecks.push('Command blocked by security policy');
         stderrLines.push('✖ [Security Policy] Dangerous command pattern detected.');
       } else {

@@ -78,10 +78,10 @@ function sleep(ms: number): Promise<void> {
 }
 
 const CANDIDATE_FLASH_MODELS = [
-  'gemini-3.1-flash-lite',
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
   'gemini-flash-latest',
-  'gemini-3.1-flash-lite',
-  'gemini-3.8-flash',
+  'gemini-2.5-flash',
 ] as const;
 
 async function callGeminiWithExponentialBackoff<T>(
@@ -102,10 +102,8 @@ async function callGeminiWithExponentialBackoff<T>(
     try {
       const req = buildRequest(model);
       const extraConfig: Record<string, any> = {};
-      if (model === 'gemini-3.1-flash-lite') {
-        extraConfig.thinkingConfig = { thinkingLevel: ThinkingLevel.MINIMAL };
-      } else if (model === 'gemini-3.8-flash') {
-        extraConfig.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
+      if (model === 'gemini-2.5-flash-lite') {
+        extraConfig.thinkingConfig = { thinkingLevel: ThinkingLevel.NONE };
       }
 
       const ai = getAiClient();
@@ -832,7 +830,7 @@ function applyVerifiedPreCheckFixesToFile(
   );
   for (const sdk of sdkIssues) {
     const badVal = sdk.invalidValue!;
-    const goodVal = sdk.replacementValue || 'gemini-flash-latest';
+    const goodVal = sdk.replacementValue || 'gemini-2.5-flash';
     const escapedBad = badVal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const reg = new RegExp(`(model\\s*:\\s*['"\`])${escapedBad}(['"\`])`, 'g');
     if (reg.test(updated)) {
@@ -923,7 +921,7 @@ INSTRUCTIONS:
 3. For each file that needs modifications, provide an array of exact "edits" ({ "search": "<exact substring in original file>", "replace": "<updated replacement substring>" }).
    - Only provide "newFileContent" if creating a brand-new file that does not exist yet or replacing a tiny file (< 500 chars). For existing code files, ALWAYS use "edits" so no existing code is ever truncated!
    - Make sure all relative imports in modified files match the ACTUAL file paths in [${repoPathsList}].
-   - If fixing an invalid Gemini model identifier like "gemini-3.5-flash", replace it with "gemini-flash-latest".
+   - If fixing an invalid Gemini model identifier like "gemini-3.5-flash" or "gemini-3.1-flash-lite", replace it with "gemini-2.5-flash".
 4. Provide clear verification advice.`;
 
   return callGeminiWithExponentialBackoff<WorkspaceResponse>(
