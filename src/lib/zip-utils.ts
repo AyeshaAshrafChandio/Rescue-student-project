@@ -2,56 +2,126 @@ import JSZip from 'jszip';
 import { ProjectFile } from '../types/index.ts';
 
 const ALLOWED_EXTENSIONS = [
-  '.js', '.jsx', '.ts', '.tsx', '.json', '.html', '.css', '.scss',
+  '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.json', '.html', '.css', '.scss', '.less',
   '.py', '.java', '.c', '.cpp', '.h', '.go', '.rs', '.php', '.rb',
-  '.md', '.txt', '.env.example', '.sql', '.yaml', '.yml', '.xml', '.vue', '.svelte'
+  '.md', '.txt', '.env.example', '.sql', '.yaml', '.yml', '.xml', '.toml', '.sh',
+  '.vue', '.svelte', '.prisma', '.graphql',
 ];
 
-export async function extractZipFile(file: File): Promise<Array<{ filePath: string; content: string; size: number }>> {
+const ALLOWED_EXACT_NAMES = new Set([
+  'readme',
+  'dockerfile',
+  'makefile',
+  'procfile',
+  '.gitignore',
+  '.env.example',
+]);
+
+const STANDARD_PROJECT_DIRS = new Set([
+  'src',
+  'public',
+  'server',
+  'client',
+  'lib',
+  'app',
+  'components',
+  'pages',
+  'views',
+  'api',
+  'db',
+  'styles',
+  'tests',
+  'test',
+  'config',
+  'scripts',
+  'utils',
+  'types',
+  'hooks',
+  'context',
+  'middleware',
+  'assets',
+  'routes',
+  'models',
+]);
+
+export async function extractZipFile(
+  file: File
+): Promise<Array<{ filePath: string; content: string; size: number }>> {
   const zip = new JSZip();
   const loadedZip = await zip.loadAsync(file);
-  const files: Array<{ filePath: string; content: string; size: number }> = [];
+  const rawExtracted: Array<{ filePath: string; content: string; size: number }> = [];
 
   const entries = Object.keys(loadedZip.files);
 
   for (const rawPath of entries) {
     const zipEntry = loadedZip.files[rawPath];
     if (zipEntry.dir) continue;
-    if (rawPath.startsWith('__MACOSX/') || rawPath.includes('/.DS_Store') || rawPath.endsWith('.DS_Store')) continue;
-    if (rawPath.includes('node_modules/') || rawPath.includes('.git/')) continue;
 
-    // Normalize path (strip common root folder if zipped as folder)
-    const cleanPath = rawPath.replace(/^[^\/]+\//, (match) => {
-      // only strip if every file has this same prefix
-      return match;
-    });
+    const normalizedRaw = rawPath.replace(/\\/g, '/').replace(/^\/+/, '');
+    if (!normalizedRaw) continue;
 
-    const hasAllowedExt = ALLOWED_EXTENSIONS.some(ext => rawPath.toLowerCase().endsWith(ext));
+    if (
+      normalizedRaw.startsWith('__MACOSX/') ||
+      normalizedRaw.includes('/.DS_Store') ||
+      normalizedRaw.endsWith('.DS_Store') ||
+      normalizedRaw.includes('node_modules/') ||
+      normalizedRaw.includes('.git/') ||
+      normalizedRaw.startsWith('dist/') ||
+      normalizedRaw.includes('/dist/') ||
+      normalizedRaw.startsWith('build/') ||
+      normalizedRaw.includes('/build/') ||
+      normalizedRaw.startsWith('.next/') ||
+      normalizedRaw.includes('/.next/')
+    ) {
+      continue;
+    }
+
+    const lower = normalizedRaw.toLowerCase();
+    const baseName = lower.split('/').pop() || '';
+    const hasAllowedExt =
+      ALLOWED_EXTENSIONS.some((ext) => lower.endsWith(ext)) ||
+      ALLOWED_EXACT_NAMES.has(baseName);
     if (!hasAllowedExt) continue;
 
     try {
       const content = await zipEntry.async('string');
-      // Limit individual file size to 250KB for text
-      if (content.length <= 250000) {
-        files.push({
-          filePath: rawPath,
+      // Limit individual file size to 500KB for text
+      if (content.length <= 500000) {
+        rawExtracted.push({
+          filePath: normalizedRaw,
           content,
           size: content.length,
         });
       }
     } catch (e) {
-      console.warn(`Could not read text for file ${rawPath}:`, e);
+      console.warn(`Could not read text for file ${normalizedRaw}:`, e);
     }
   }
 
-  if (files.length === 0) {
+  if (rawExtracted.length === 0) {
     throw new Error('No valid text/source code files found inside the ZIP archive.');
   }
 
-  return files;
+  // Strip common top-level wrapper folder if the entire archive is wrapped in a single directory
+  const allHaveSlash = rawExtracted.every((f) => f.filePath.includes('/'));
+  if (allHaveSlash) {
+    const firstPrefix = rawExtracted[0].filePath.split('/')[0];
+    const allSharePrefix = rawExtracted.every((f) => f.filePath.startsWith(`${firstPrefix}/`));
+    if (allSharePrefix && !STANDARD_PROJECT_DIRS.has(firstPrefix.toLowerCase())) {
+      return rawExtracted.map((f) => ({
+        ...f,
+        filePath: f.filePath.slice(firstPrefix.length + 1),
+      }));
+    }
+  }
+
+  return rawExtracted;
 }
 
-export async function downloadProjectAsZip(projectName: string, files: ProjectFile[]): Promise<void> {
+export async function downloadProjectAsZip(
+  projectName: string,
+  files: ProjectFile[]
+): Promise<void> {
   const zip = new JSZip();
 
   for (const file of files) {

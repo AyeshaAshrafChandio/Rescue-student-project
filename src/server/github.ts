@@ -1,3 +1,5 @@
+import { reconstructCanonicalRepoTree } from './verifier.ts';
+
 export interface GitHubRepoFile {
   filePath: string;
   content: string;
@@ -120,31 +122,35 @@ async function processTree(
   ];
 
   const allowedExtensions = [
-    '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.json', '.html', '.css', '.scss',
+    '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.json', '.html', '.css', '.scss', '.less',
     '.py', '.java', '.c', '.cpp', '.h', '.go', '.rs', '.php', '.rb',
     '.md', '.txt', '.env.example', '.sql', '.yaml', '.yml', '.xml', '.toml', '.sh',
+    '.vue', '.svelte', '.prisma', '.graphql',
   ];
 
-  const allowedExactNames = ['readme', 'dockerfile', 'makefile', 'procfile', '.gitignore'];
+  const allowedExactNames = ['readme', 'dockerfile', 'makefile', 'procfile', '.gitignore', '.env.example'];
 
   const eligibleItems = treeData.tree
     .filter((item: any) => {
       if (item.type !== 'blob') return false;
       const filePath = item.path;
       if (ignoredPrefixes.some((pref) => filePath.startsWith(pref))) return false;
-      if (item.size && item.size > 250000) return false; // skip huge files > 250KB
+      if (item.size && item.size > 500000) return false; // skip huge binary/bundle files > 500KB
       const lower = filePath.toLowerCase();
       const baseName = lower.split('/').pop() || '';
+      if (baseName === 'package-lock.json' || baseName === 'yarn.lock' || baseName === 'pnpm-lock.yaml') {
+        return false;
+      }
       return (
         allowedExtensions.some((ext) => lower.endsWith(ext)) ||
         allowedExactNames.includes(baseName)
       );
     })
-    .slice(0, 45); // Limit to top 45 essential source files
+    .slice(0, 100); // Support up to 100 source files per repository
 
   const files: GitHubRepoFile[] = [];
 
-  const batchSize = 6;
+  const batchSize = 8;
   for (let i = 0; i < eligibleItems.length; i += batchSize) {
     const chunk = eligibleItems.slice(i, i + batchSize);
     await Promise.all(
@@ -194,7 +200,7 @@ async function processTree(
   }
 
   return {
-    files,
+    files: reconstructCanonicalRepoTree(files),
     repoName: `${owner}/${repo}`,
     defaultBranch: branch,
   };

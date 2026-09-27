@@ -16,7 +16,7 @@ import {
   ensureFirebaseAuthorizedDomains,
 } from '../lib/firebase-admin.ts';
 import { analyzeCodebaseWithGemini, diagnoseAndProposeCodeFix } from './gemini.ts';
-import { runRealCodeVerification } from './verifier.ts';
+import { runRealCodeVerification, reconstructCanonicalRepoTree } from './verifier.ts';
 import { fetchGitHubRepository } from './github.ts';
 import {
   isCloudinaryConfigured,
@@ -168,9 +168,17 @@ apiRouter.post('/projects', requireAuth, async (req: AuthRequest, res: Response)
 
     await db.insert(projects).values(newProject);
 
-    // Insert project files
-    for (let i = 0; i < files.length; i++) {
-      const f = files[i];
+    // Insert project files (reconstructed to canonical repository tree)
+    const canonicalFiles = reconstructCanonicalRepoTree(
+      files.map((f: any) => ({
+        ...f,
+        filePath: String(f.filePath || ''),
+        content: String(f.content ?? ''),
+      }))
+    );
+
+    for (let i = 0; i < canonicalFiles.length; i++) {
+      const f = canonicalFiles[i];
       await db.insert(projectFiles).values({
         id: `file-${i}-${Date.now()}`,
         projectId,
@@ -312,6 +320,23 @@ apiRouter.post('/projects/:id/analyze', requireAuth, async (req: AuthRequest, re
       return res.status(400).json({ error: 'No files found in database for this project.' });
     }
 
+    // Reconstruct canonical repository file tree and persist any canonicalized file paths
+    const canonicalFiles = reconstructCanonicalRepoTree(
+      files.map((f: any) => ({
+        id: f.id,
+        filePath: f.filePath,
+        content: f.content,
+      }))
+    );
+    for (let i = 0; i < canonicalFiles.length; i++) {
+      if (canonicalFiles[i].filePath !== files[i].filePath) {
+        await db
+          .update(projectFiles)
+          .set({ filePath: canonicalFiles[i].filePath })
+          .where(eq(projectFiles.id, canonicalFiles[i].id));
+      }
+    }
+
     // Mark project as actively analyzing
     await db
       .update(projects)
@@ -325,7 +350,7 @@ apiRouter.post('/projects/:id/analyze', requireAuth, async (req: AuthRequest, re
     const analysis = await analyzeCodebaseWithGemini({
       title: project.title,
       requirements: project.requirementsText || '',
-      files: files.map((f: any) => ({ filePath: f.filePath, content: f.content })),
+      files: canonicalFiles.map((f) => ({ filePath: f.filePath, content: f.content })),
     });
 
     // Replace any previous report for this project
@@ -550,17 +575,25 @@ apiRouter.post('/projects/:id/tasks/:taskId/ai-fix', requireAuth, async (req: Au
       .where(eq(projectFiles.projectId, id));
 
     const matchingFiles = allFiles.filter((f: any) =>
-      targetFilesArr.some(tf => tf === f.filePath || f.filePath.endsWith(tf))
+      targetFilesArr.some(
+        (tf) =>
+          f.filePath === tf ||
+          f.filePath.endsWith(`/${tf}`) ||
+          tf.endsWith(`/${f.filePath}`)
+      )
     );
-    const filesContext = matchingFiles.length > 0 ? matchingFiles : allFiles.slice(0, 5);
+    const contextFiles =
+      matchingFiles.length > 0 ? matchingFiles : allFiles.slice(0, 10);
 
-    // Call real Gemini fix diagnosis
+    // Call real Gemini fix diagnosis with full repository file paths and complete target files
     const solution = await diagnoseAndProposeCodeFix({
       taskTitle: task.title,
       taskDescription: task.description,
       category: task.category,
       userMessage,
-      targetFiles: filesContext.map((f: any) => ({ filePath: f.filePath, content: f.content })),
+      allProjectFilePaths: allFiles.map((f: any) => f.filePath),
+      allProjectFiles: allFiles.map((f: any) => ({ filePath: f.filePath, content: f.content })),
+      targetFiles: contextFiles.map((f: any) => ({ filePath: f.filePath, content: f.content })),
       previousVerificationOutput: task.verificationOutput || undefined,
     });
 
@@ -695,11 +728,14 @@ apiRouter.post('/projects/:id/tasks/:taskId/verify', requireAuth, async (req: Au
       .from(projectFiles)
       .where(eq(projectFiles.projectId, id));
 
+    const taskTargetFiles: string[] = JSON.parse(task.targetFilesJson || '[]');
+
     // Run real isolated sandbox verification
     const verification = await runRealCodeVerification({
       files: files.map((f: any) => ({ filePath: f.filePath, content: f.content })),
       testCommand: task.testCommand,
       category: task.category,
+      targetFiles: taskTargetFiles,
     });
 
     // Save run to verification_runs table
@@ -728,23 +764,35 @@ apiRouter.post('/projects/:id/tasks/:taskId/verify', requireAuth, async (req: Au
         })
         .where(eq(rescueTasks.id, taskId));
 
-      // Recompute project health and progress
+      // Recompute project health and progress strictly from verified initial report score and verified task completion
       const allTasks = await db
         .select()
         .from(rescueTasks)
         .where(eq(rescueTasks.projectId, id));
 
+      const reportRows = await db
+        .select()
+        .from(analysisReports)
+        .where(eq(analysisReports.projectId, id))
+        .orderBy(desc(analysisReports.createdAt));
+
       const verifiedCount = allTasks.filter((t: any) => t.id === taskId || t.isVerified).length;
-      const progress = Math.round((verifiedCount / allTasks.length) * 100);
-      const baseHealth = project.healthScore || 40;
-      const newHealth = Math.min(100, Math.round(baseHealth + (verifiedCount / allTasks.length) * (100 - baseHealth)));
+      const progress = Math.round((verifiedCount / Math.max(1, allTasks.length)) * 100);
+      const initialReportScore = reportRows[0]?.healthScore ?? project.healthScore;
+      const newHealth = Math.min(
+        100,
+        Math.round(
+          initialReportScore +
+            (verifiedCount / Math.max(1, allTasks.length)) * (100 - initialReportScore)
+        )
+      );
 
       await db
         .update(projects)
         .set({
           healthScore: newHealth,
           progressPercent: progress,
-          status: newHealth >= 90 ? 'completed' : 'in_rescue',
+          status: verifiedCount === allTasks.length ? 'completed' : 'in_rescue',
           updatedAt: new Date(),
         })
         .where(eq(projects.id, id));
