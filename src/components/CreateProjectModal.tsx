@@ -16,7 +16,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   onClose,
   onProjectCreated,
 }) => {
-  const { getIdToken } = useAuth();
+  const { user, getIdToken, requireAuthForAction } = useAuth();
   const [sourceType, setSourceType] = useState<'zip' | 'github'>('zip');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -32,26 +32,69 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
 
   if (!isOpen) return null;
 
+  const resetFormState = () => {
+    setTitle('');
+    setDescription('');
+    setDeadline('');
+    setRequirements('');
+    setRepoUrl('');
+    setGithubBranch('main');
+    setGithubToken('');
+    setExtractedFiles([]);
+    setErrorMsg(null);
+  };
+
   const handleZipUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const selectedFiles = e.target.files;
+    if (!selectedFiles || selectedFiles.length === 0) return;
 
     setErrorMsg(null);
     setIsProcessing(true);
     try {
-      const files = await extractZipFile(file);
-      setExtractedFiles(files);
-      if (!title) {
-        setTitle(file.name.replace(/\.zip$/i, ''));
+      const firstFile = selectedFiles[0];
+      if (selectedFiles.length === 1 && firstFile.name.toLowerCase().endsWith('.zip')) {
+        const files = await extractZipFile(firstFile);
+        setExtractedFiles(files);
+        if (!title) {
+          setTitle(firstFile.name.replace(/\.zip$/i, ''));
+        }
+      } else {
+        const directFiles: Array<{ filePath: string; content: string; size: number }> = [];
+        for (let i = 0; i < selectedFiles.length; i++) {
+          const f = selectedFiles[i];
+          if (f.name.toLowerCase().endsWith('.zip')) {
+            const zipped = await extractZipFile(f);
+            directFiles.push(...zipped);
+          } else {
+            const content = await f.text();
+            directFiles.push({
+              filePath: f.webkitRelativePath || f.name,
+              content,
+              size: content.length,
+            });
+          }
+        }
+        if (directFiles.length === 0) {
+          throw new Error('No readable source code files selected.');
+        }
+        setExtractedFiles(directFiles);
+        if (!title) {
+          setTitle(firstFile.name.replace(/\.[^.]+$/, ''));
+        }
       }
     } catch (err: any) {
-      setErrorMsg(err.message || 'Failed to extract ZIP archive.');
+      setErrorMsg(err.message || 'Failed to extract project files.');
     } finally {
       setIsProcessing(false);
     }
   };
 
   const handleFetchGitHub = async () => {
+    if (!requireAuthForAction({ openCreateModal: true, label: 'GitHub Repository Import' })) {
+      onClose();
+      return;
+    }
+
     if (!repoUrl.trim()) {
       setErrorMsg('Please enter a GitHub repository URL or owner/repo.');
       return;
@@ -80,12 +123,17 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!requireAuthForAction({ openCreateModal: true, label: 'Project Rescue Creation' })) {
+      onClose();
+      return;
+    }
+
     if (!title.trim()) {
       setErrorMsg('Project title is required.');
       return;
     }
     if (extractedFiles.length === 0) {
-      setErrorMsg('Please upload your project ZIP file or enter a public GitHub repository.');
+      setErrorMsg('Please upload your project ZIP file or fetch a GitHub repository.');
       return;
     }
 
@@ -95,7 +143,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     const projectId = `proj-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const newProject: Project = {
       id: projectId,
-      ownerId: 'student-rescuer',
+      ownerId: user?.uid || '',
       title: title.trim(),
       description: description.trim(),
       sourceType,
@@ -122,6 +170,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
 
     try {
       await onProjectCreated(newProject, projectFiles);
+      resetFormState();
       onClose();
     } catch (err: any) {
       setErrorMsg(err.message || 'Failed to initialize project.');

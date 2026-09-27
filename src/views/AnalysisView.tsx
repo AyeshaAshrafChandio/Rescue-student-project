@@ -52,7 +52,7 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({
             </h3>
             <p className="text-xs sm:text-sm text-slate-300 max-w-lg mx-auto leading-relaxed break-words">
               {analysisError ||
-                'Gemini API is currently experiencing high demand. Automatic retries with exponential backoff were attempted, and no fake analysis was generated.'}
+                'Gemini API is currently experiencing high demand. Automatic retries with exponential backoff were attempted, and no synthetic analysis was generated.'}
             </p>
           </div>
 
@@ -307,6 +307,23 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({
             )}
           </div>
         </div>
+      </div>
+
+      {/* Bottom Step Progression Bar */}
+      <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 sm:p-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="text-center sm:text-left">
+          <h3 className="text-sm font-bold text-white">Next Step: Actionable Rescue Plan</h3>
+          <p className="text-xs text-slate-400">
+            Review prioritized tasks generated from this AST &amp; Gemini analysis report.
+          </p>
+        </div>
+        <button
+          onClick={onProceedToPlan}
+          className="w-full sm:w-auto flex items-center justify-center space-x-2 bg-gradient-to-r from-emerald-600 to-indigo-600 hover:from-emerald-500 hover:to-indigo-500 text-white font-semibold text-xs px-6 py-3 rounded-xl shadow-lg transition"
+        >
+          <span>Continue to Rescue Plan</span>
+          <ArrowRight className="w-4 h-4 shrink-0" />
+        </button>
       </div>
     </div>
   );

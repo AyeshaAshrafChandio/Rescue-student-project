@@ -252,6 +252,36 @@ export const RescuePlanView: React.FC<RescuePlanViewProps> = ({
         })}
       </div>
       )}
+
+      {tasks.length > 0 && (
+        <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 sm:p-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="text-center sm:text-left">
+            <h3 className="text-sm font-bold text-white">Ready to Fix &amp; Verify Tasks?</h3>
+            <p className="text-xs text-slate-400">
+              Open the AI Workspace to diagnose bugs, apply code diffs, run isolated sandbox verification, or proceed to Final Check.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto justify-center sm:justify-end">
+            <button
+              onClick={() => {
+                const nextPending = tasks.find(t => !t.isVerified) || tasks[0];
+                if (nextPending) onSelectTask(nextPending);
+              }}
+              className="flex-1 sm:flex-initial inline-flex items-center justify-center space-x-2 bg-gradient-to-r from-amber-600 to-rose-600 hover:from-amber-500 hover:to-rose-500 text-white font-semibold text-xs px-5 py-2.5 rounded-xl shadow-md transition"
+            >
+              <Sparkles className="w-4 h-4" />
+              <span>Open AI Workspace</span>
+            </button>
+            <button
+              onClick={onProceedToReport}
+              className="flex-1 sm:flex-initial inline-flex items-center justify-center space-x-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs px-5 py-2.5 rounded-xl border border-slate-700 transition"
+            >
+              <span>Final Check &amp; Report</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

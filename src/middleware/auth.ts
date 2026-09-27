@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
-import { adminAuth } from '../lib/firebase-admin.ts';
+import { verifyFirebaseToken } from '../lib/firebase-admin.ts';
 import { getOrCreateUser } from '../db/users.ts';
 
 export interface AuthenticatedUser {
@@ -7,7 +7,6 @@ export interface AuthenticatedUser {
   email?: string;
   displayName?: string;
   photoUrl?: string;
-  isGuest?: boolean;
 }
 
 export interface AuthRequest extends Request {
@@ -26,25 +25,24 @@ export const requireStrictFirebaseAuth = async (
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({
-      error: 'Unauthorized: Missing Firebase Bearer token.',
+      error: 'Authentication required: Please log in or sign up with Firebase Authentication.',
     });
   }
 
-  const token = authHeader.split('Bearer ')[1].trim();
+  const token = authHeader.split('Bearer ')[1]?.trim();
   if (!token || token === 'undefined' || token === 'null') {
     return res.status(401).json({
-      error: 'Unauthorized: Empty Firebase Bearer token.',
+      error: 'Authentication required: Missing Firebase ID token.',
     });
   }
 
   try {
-    const decoded = await adminAuth.verifyIdToken(token);
+    const decoded = await verifyFirebaseToken(token);
     req.user = {
       uid: decoded.uid,
       email: decoded.email || 'user@firebase.auth',
       displayName: decoded.name || undefined,
       photoUrl: decoded.picture || undefined,
-      isGuest: false,
     };
 
     // Synchronize user record in PostgreSQL via Drizzle upsert
@@ -61,63 +59,13 @@ export const requireStrictFirebaseAuth = async (
   } catch (err: any) {
     console.warn('Firebase ID token verification failed:', err.message);
     return res.status(401).json({
-      error: 'Unauthorized: Invalid or expired Firebase authentication token.',
+      error: 'Unauthorized: Invalid or expired Firebase authentication token. Please sign in again.',
     });
   }
 };
 
 /**
- * Verifies Firebase ID token when provided in Authorization: Bearer <token> header
- * (rejecting invalid tokens with 401), and syncs authenticated users to PostgreSQL.
- * Also supports guest workspace session IDs (x-user-id) when not yet signed in.
+ * All project-related and user-related routes strictly require a verified Firebase ID token.
  */
-export const requireAuth = async (req: AuthRequest, res: Response, next: NextFunction) => {
-  const authHeader = req.headers.authorization;
-  const guestHeader = req.headers['x-user-id'] as string;
+export const requireAuth = requireStrictFirebaseAuth;
 
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    const token = authHeader.split('Bearer ')[1].trim();
-
-    if (token && token !== 'undefined' && token !== 'null') {
-      try {
-        const decoded = await adminAuth.verifyIdToken(token);
-        req.user = {
-          uid: decoded.uid,
-          email: decoded.email || 'user@firebase.auth',
-          displayName: decoded.name || undefined,
-          photoUrl: decoded.picture || undefined,
-          isGuest: false,
-        };
-
-        await getOrCreateUser(
-          decoded.uid,
-          decoded.email || 'user@firebase.auth',
-          decoded.name || null,
-          decoded.picture || null
-        ).catch((dbErr) => {
-          console.warn('Non-fatal user sync warning:', dbErr.message);
-        });
-
-        return next();
-      } catch (err: any) {
-        console.warn('Firebase ID token verification failed:', err.message);
-        return res.status(401).json({
-          error: 'Unauthorized: Invalid Firebase authentication token.',
-        });
-      }
-    }
-  }
-
-  if (guestHeader && guestHeader.trim()) {
-    req.user = {
-      uid: guestHeader.trim(),
-      email: 'guest@student.local',
-      isGuest: true,
-    };
-    return next();
-  }
-
-  return res.status(401).json({
-    error: 'Unauthorized: Missing Firebase authentication token or session.',
-  });
-};

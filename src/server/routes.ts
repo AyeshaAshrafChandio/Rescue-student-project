@@ -11,12 +11,46 @@ import {
 } from '../db/schema.ts';
 import { getOrCreateUser, getUserByUid } from '../db/users.ts';
 import { requireAuth, requireStrictFirebaseAuth, type AuthRequest } from '../middleware/auth.ts';
+import {
+  getPublicFirebaseClientConfig,
+  ensureFirebaseAuthorizedDomains,
+} from '../lib/firebase-admin.ts';
 import { analyzeCodebaseWithGemini, diagnoseAndProposeCodeFix } from './gemini.ts';
 import { runRealCodeVerification } from './verifier.ts';
 import { fetchGitHubRepository } from './github.ts';
-import { isCloudinaryConfigured, uploadSnapshotToCloudinaryFree } from './cloudinary.ts';
+import {
+  isCloudinaryConfigured,
+  checkCloudinaryStatus,
+  uploadSnapshotToCloudinaryFree,
+} from './cloudinary.ts';
 
 export const apiRouter = Router();
+
+// Public runtime Firebase client configuration endpoint (also ensures request domain is authorized)
+apiRouter.get('/auth/firebase-config', async (req, res: Response) => {
+  const queryDomain = typeof req.query.domain === 'string' ? req.query.domain : '';
+  const originHeader = typeof req.headers.origin === 'string' ? req.headers.origin : '';
+  const extraDomains = [queryDomain, req.hostname, originHeader, 'rescue-student-project.ai.studio'].filter(
+    Boolean
+  );
+  const authorizedDomains = await ensureFirebaseAuthorizedDomains(extraDomains);
+  return res.json({
+    ...getPublicFirebaseClientConfig(),
+    authorizedDomains,
+  });
+});
+
+apiRouter.post('/auth/authorize-domain', async (req, res: Response) => {
+  const domain = typeof req.body?.domain === 'string' ? req.body.domain : '';
+  const extraDomains = [domain, req.hostname, 'rescue-student-project.ai.studio'].filter(Boolean);
+  const authorizedDomains = await ensureFirebaseAuthorizedDomains(extraDomains);
+  return res.json({ authorized: true, authorizedDomains });
+});
+
+apiRouter.get('/cloudinary-status', async (_req, res: Response) => {
+  const status = await checkCloudinaryStatus();
+  return res.json(status);
+});
 
 // Neon PostgreSQL + Drizzle ORM live health & connection check
 apiRouter.get('/db-status', async (_req, res: Response) => {
@@ -793,9 +827,21 @@ apiRouter.post('/projects/:id/cloud-archive', requireAuth, async (req: AuthReque
       snapshotPayload
     );
 
+    await db.insert(auditLogs).values({
+      id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      projectId: id,
+      userId,
+      action: 'CLOUD_ARCHIVE_UPLOADED',
+      details: JSON.stringify({
+        publicId: uploadResult.publicId,
+        secureUrl: uploadResult.secureUrl,
+        bytes: uploadResult.bytes,
+      }),
+    });
+
     return res.json(uploadResult);
   } catch (error: any) {
     console.error('Error archiving to Cloudinary Free Tier:', error);
-    return res.status(500).json({ error: error.message || 'Failed to archive snapshot to Cloudinary Free Tier.' });
+    return res.status(500).json({ error: error.message || 'Failed to archive snapshot to Cloudinary.' });
   }
 });

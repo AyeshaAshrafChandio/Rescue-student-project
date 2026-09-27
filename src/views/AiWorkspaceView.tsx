@@ -32,6 +32,8 @@ interface AiWorkspaceViewProps {
     onRetryStatus?: (info: RetryStatusInfo) => void
   ) => Promise<{ explanation: string; rootCause: string; proposedChanges: Array<{ filePath: string; description: string; newContent: string }>; verificationAdvice?: string }>;
   onProceedToNextTask: () => void;
+  onProceedToFinalCheck?: () => void;
+  focusVerification?: boolean;
 }
 
 export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
@@ -44,6 +46,8 @@ export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
   onVerifyTask,
   onAskAiFix,
   onProceedToNextTask,
+  onProceedToFinalCheck,
+  focusVerification = false,
 }) => {
   const [activeFileTab, setActiveFileTab] = useState<string>(
     currentTask.targetFiles?.[0] || (projectFiles[0]?.filePath || '')
@@ -168,6 +172,16 @@ export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
   };
 
   const isCurrentTaskVerified = currentTask.isVerified || currentTask.status === 'verified' || verificationResult?.status === 'passed';
+  const hasRemainingUnverifiedTasks = tasks.some(t => !t.isVerified && t.id !== currentTask.id);
+
+  useEffect(() => {
+    if (focusVerification) {
+      const el = document.getElementById('isolated-verification-card');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+  }, [focusVerification]);
 
   return (
     <div className="space-y-6 pb-20">
@@ -428,7 +442,14 @@ export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
           </div>
 
           {/* Real Verification Card */}
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl space-y-4 min-w-0">
+          <div
+            id="isolated-verification-card"
+            className={`bg-slate-900 border rounded-2xl p-4 sm:p-5 shadow-xl space-y-4 min-w-0 transition ${
+              focusVerification
+                ? 'border-emerald-500/60 ring-1 ring-emerald-500/30'
+                : 'border-slate-800'
+            }`}
+          >
             <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-800">
               <div className="flex items-center space-x-2 text-white font-bold text-sm">
                 <Terminal className="w-4 h-4 text-emerald-400 shrink-0" />
@@ -499,6 +520,31 @@ export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
                     </div>
                   )}
                 </div>
+
+                {/* If passed: Proceed to Next Task or Final Check */}
+                {verificationResult.status === 'passed' && (
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    <button
+                      onClick={onProceedToNextTask}
+                      className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs py-2 px-3 rounded-xl transition flex items-center justify-center space-x-1.5 shadow"
+                    >
+                      <span>
+                        {hasRemainingUnverifiedTasks
+                          ? 'Proceed to Next Task'
+                          : 'Proceed to Final Check & Report'}
+                      </span>
+                      <ArrowRight className="w-3.5 h-3.5 shrink-0" />
+                    </button>
+                    {hasRemainingUnverifiedTasks && onProceedToFinalCheck && (
+                      <button
+                        onClick={onProceedToFinalCheck}
+                        className="bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs py-2 px-3 rounded-xl border border-slate-700 transition"
+                      >
+                        Final Check
+                      </button>
+                    )}
+                  </div>
+                )}
 
                 {/* If failed: Suggest fixing with AI */}
                 {verificationResult.status === 'failed' && (

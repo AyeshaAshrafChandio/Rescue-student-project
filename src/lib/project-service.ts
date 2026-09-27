@@ -12,26 +12,15 @@ export interface RetryStatusInfo {
   message: string;
 }
 
-let runtimeClientId: string | null = null;
-
-function getClientSessionId(): string {
-  if (!runtimeClientId) {
-    runtimeClientId = `student-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  }
-  return runtimeClientId;
-}
-
 function getAuthHeaders(token?: string | null): Record<string, string> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    'x-user-id': getClientSessionId(),
-  };
-
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
+  if (!token) {
+    throw new Error('Authentication required. Please log in or sign up to continue.');
   }
 
-  return headers;
+  return {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${token}`,
+  };
 }
 
 function sleep(ms: number): Promise<void> {
@@ -357,6 +346,31 @@ export async function syncAuthenticatedUser(
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error || 'Failed to verify Firebase token with backend.');
+  }
+
+  return await res.json();
+}
+
+// 13. Archive Rescued Project Snapshot to Cloudinary
+export async function archiveProjectToCloudinary(
+  projectId: string,
+  token?: string | null
+): Promise<{
+  url: string;
+  secureUrl: string;
+  publicId: string;
+  bytes: number;
+  format: string;
+  createdAt: string;
+}> {
+  const res = await fetch(`/api/projects/${projectId}/cloud-archive`, {
+    method: 'POST',
+    headers: getAuthHeaders(token),
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to archive snapshot to Cloudinary.');
   }
 
   return await res.json();
