@@ -123,3 +123,32 @@ After completing and verifying the highest-priority tasks:
 **Built for the IBM Bob 2.0 Hackathon.**
 
 Available next action: [Create a downloadable DOCX file here in this chat containing the editable prose above](reference-followup:2510)
+## IBM Bob 2.0 Usage
+
+IBM Bob 2.0 was used as an active development, QA, debugging, and code-review partner for **Student Project Rescue**.
+
+### How IBM Bob Was Used
+
+- Inspected and understood the actual project repository and its existing architecture.
+- Reviewed frontend, backend, API routes, dependencies, configuration, AI integration, and verification logic.
+- Audited the implementation against the project's actual requirements.
+- Investigated real security issues and potential runtime problems.
+- Verified previously reported issues against the actual source code instead of relying on assumptions.
+- Reviewed Gemini model configuration and SDK compatibility.
+- Assisted with debugging and fixing confirmed implementation issues.
+- Reviewed the verification system to ensure dangerous commands could not be executed through the test-command workflow.
+- Performed a final security and code-quality audit.
+- Reviewed the final state of the project and separated verified results from items that could not be tested.
+
+### Bugs and Issues Fixed With IBM Bob
+
+- Fixed invalid Gemini model identifiers and corrected the Gemini fallback configuration.
+- Fixed the invalid `ThinkingLevel.MINIMAL` configuration.
+- Removed a duplicate Gemini fallback model.
+- Fixed the `esbuild` dependency version conflict in `package.json`.
+- Improved the verifier's detection of invalid Gemini model patterns.
+- Strengthened the `testCommand` security blocklist to prevent dangerous command execution patterns.
+
+### IBM Bob Contribution
+
+IBM Bob was used directly on the real project repository to **inspect → analyze → debug → fix → review → verify** the existing implementation. No fake, mock, or demo repository was used for the Bob audit, and the existing application architecture and UI were preserved.
