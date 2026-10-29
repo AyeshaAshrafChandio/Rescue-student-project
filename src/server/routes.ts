@@ -366,11 +366,29 @@ apiRouter.post('/projects/:id/analyze', requireAuth, async (req: AuthRequest, re
       req.body?.aiProvider === 'nebius' ? 'nebius' : 'gemini';
 
     // Call unified analysis (NVIDIA Nemotron via Nebius Token Factory or Google Gemini)
-    const { analysis, aiProvider, modelUsed } = await runUnifiedCodebaseAnalysis({
+    const { analysis, aiProvider, modelUsed, tokenUsage } = await runUnifiedCodebaseAnalysis({
       provider: requestedProvider,
       title: project.title,
       requirements: project.requirementsText || '',
       files: canonicalFiles.map((f) => ({ filePath: f.filePath, content: f.content })),
+    });
+
+    // Record audit log with genuine token usage
+    await db.insert(auditLogs).values({
+      id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      projectId: id,
+      userId,
+      action: aiProvider === 'nebius' ? 'AI_ANALYSIS_NEBIUS' : 'AI_ANALYSIS_GEMINI',
+      details: JSON.stringify({
+        provider: aiProvider,
+        model: modelUsed,
+        endpoint:
+          aiProvider === 'nebius'
+            ? 'https://api.tokenfactory.nebius.com/v1/chat/completions'
+            : 'Google Gemini API',
+        usage: tokenUsage || null,
+        executedAt: new Date().toISOString(),
+      }),
     });
 
     // Replace any previous report for this project
@@ -449,6 +467,7 @@ apiRouter.post('/projects/:id/analyze', requireAuth, async (req: AuthRequest, re
         featuresUnverifiable: analysis.featuresUnverifiable,
         aiProvider,
         modelUsed,
+        tokenUsage: tokenUsage || undefined,
         createdAt: new Date().toISOString(),
       },
       tasks: initialTasks,
@@ -623,7 +642,7 @@ apiRouter.post('/projects/:id/tasks/:taskId/ai-fix', requireAuth, async (req: Au
       clientProvider === 'nebius' ? 'nebius' : clientProvider === 'gemini' ? 'gemini' : (task.aiProvider as SupportedAiProvider) || 'gemini';
 
     // Call unified AI fix diagnosis (NVIDIA Nemotron via Nebius Token Factory or Google Gemini)
-    const { solution, aiProvider, modelUsed } = await runUnifiedTaskDiagnosis({
+    const { solution, aiProvider, modelUsed, tokenUsage } = await runUnifiedTaskDiagnosis({
       provider: requestedProvider,
       taskInput: {
         taskTitle: task.title,
@@ -635,6 +654,25 @@ apiRouter.post('/projects/:id/tasks/:taskId/ai-fix', requireAuth, async (req: Au
         targetFiles: contextFiles.map((f: any) => ({ filePath: f.filePath, content: f.content })),
         previousVerificationOutput: task.verificationOutput || undefined,
       },
+    });
+
+    // Record audit log with genuine token usage
+    await db.insert(auditLogs).values({
+      id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      projectId: id,
+      userId,
+      action: aiProvider === 'nebius' ? 'AI_TASK_FIX_NEBIUS' : 'AI_TASK_FIX_GEMINI',
+      details: JSON.stringify({
+        taskId,
+        provider: aiProvider,
+        model: modelUsed,
+        endpoint:
+          aiProvider === 'nebius'
+            ? 'https://api.tokenfactory.nebius.com/v1/chat/completions'
+            : 'Google Gemini API',
+        usage: tokenUsage || null,
+        executedAt: new Date().toISOString(),
+      }),
     });
 
     // Save proposed changes, diagnosis, provider and model to task in PostgreSQL
@@ -653,6 +691,7 @@ apiRouter.post('/projects/:id/tasks/:taskId/ai-fix', requireAuth, async (req: Au
       ...solution,
       aiProvider,
       modelUsed,
+      tokenUsage: tokenUsage || undefined,
     });
   } catch (error: any) {
     console.error('Error generating AI fix:', error);

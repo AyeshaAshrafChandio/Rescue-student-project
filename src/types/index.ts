@@ -98,6 +98,12 @@ export interface AiProviderInfo {
   description: string;
 }
 
+export interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
 export interface AnalysisReport {
   id: string;
   projectId: string;
@@ -111,6 +117,7 @@ export interface AnalysisReport {
   featuresUnverifiable: FeatureUnverifiable[];
   aiProvider?: AiProvider;
   modelUsed?: string;
+  tokenUsage?: TokenUsage;
   createdAt: string;
 }
 

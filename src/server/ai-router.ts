@@ -11,6 +11,7 @@ import {
   diagnoseAndProposeCodeFixWithNebius,
   checkNebiusStatus,
   NEBIUS_DEFAULT_MODEL,
+  type NebiusTokenUsage,
 } from './nebius.ts';
 
 export type SupportedAiProvider = 'gemini' | 'nebius';
@@ -73,6 +74,7 @@ export async function runUnifiedCodebaseAnalysis(params: {
   analysis: AnalysisResult;
   aiProvider: SupportedAiProvider;
   modelUsed: string;
+  tokenUsage?: NebiusTokenUsage;
 }> {
   const { provider, title, requirements, files } = params;
 
@@ -84,6 +86,7 @@ export async function runUnifiedCodebaseAnalysis(params: {
       analysis,
       aiProvider: 'nebius',
       modelUsed: nebiusStatus.model,
+      tokenUsage: analysis.tokenUsage,
     };
   }
 
@@ -104,6 +107,7 @@ export async function runUnifiedTaskDiagnosis(params: {
   solution: WorkspaceResponse;
   aiProvider: SupportedAiProvider;
   modelUsed: string;
+  tokenUsage?: NebiusTokenUsage;
 }> {
   const { provider, taskInput } = params;
 
@@ -117,6 +121,7 @@ export async function runUnifiedTaskDiagnosis(params: {
       solution,
       aiProvider: 'nebius',
       modelUsed: nebiusStatus.model,
+      tokenUsage: solution.tokenUsage,
     };
   }
 

@@ -148,6 +148,17 @@ function cleanAndParseJson<T>(raw: string, contextDescription: string): T {
   }
 }
 
+export interface NebiusTokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
+export interface NebiusChatCompletionResult {
+  content: string;
+  usage?: NebiusTokenUsage;
+}
+
 /**
  * Executes a real chat completion request to Nebius Token Factory API
  * with exponential backoff and non-retryable error short-circuiting.
@@ -158,7 +169,7 @@ async function callNebiusChatCompletion(
   operationName: string,
   maxAttempts = 3,
   baseDelayMs = 1500
-): Promise<string> {
+): Promise<NebiusChatCompletionResult> {
   const config = getNebiusConfig();
   const endpoint = `${config.baseUrl}/chat/completions`;
 
@@ -207,6 +218,11 @@ async function callNebiusChatCompletion(
               content?: string;
             };
           }>;
+          usage?: {
+            prompt_tokens?: number;
+            completion_tokens?: number;
+            total_tokens?: number;
+          };
           error?: {
             message?: string;
           };
@@ -222,7 +238,19 @@ async function callNebiusChatCompletion(
           );
         }
 
-        return content;
+        const usage: NebiusTokenUsage | undefined = data.usage
+          ? {
+              promptTokens: data.usage.prompt_tokens ?? 0,
+              completionTokens: data.usage.completion_tokens ?? 0,
+              totalTokens: data.usage.total_tokens ?? 0,
+            }
+          : undefined;
+
+        console.log(
+          `[Nebius Token Factory] Success (${config.model}): promptTokens=${usage?.promptTokens}, completionTokens=${usage?.completionTokens}, totalTokens=${usage?.totalTokens}`
+        );
+
+        return { content, usage };
       }
 
       // Non-200 responses
@@ -445,7 +473,7 @@ ${preVerificationSummary}
 COMPLETE REPOSITORY FILES (${canonicalFiles.length} files):
 ${fullFilesDump}`;
 
-  const rawJson = await callNebiusChatCompletion(
+  const { content: rawJson, usage } = await callNebiusChatCompletion(
     systemPrompt,
     userPrompt,
     'Codebase Analysis (NVIDIA Nemotron via Nebius Token Factory)'
@@ -536,6 +564,7 @@ ${fullFilesDump}`;
       description: t.description || '',
       testCommand: t.testCommand || '',
     })),
+    tokenUsage: usage,
   };
 }
 
@@ -639,7 +668,7 @@ ${
 TARGET CODE FILES:
 ${filesContext}`;
 
-  const rawJson = await callNebiusChatCompletion(
+  const { content: rawJson, usage } = await callNebiusChatCompletion(
     systemPrompt,
     userPrompt,
     'Workspace Code Fix Diagnosis (NVIDIA Nemotron via Nebius Token Factory)'
@@ -740,5 +769,6 @@ ${filesContext}`;
     rootCause: parsed.rootCause,
     proposedChanges: Array.from(proposedChangesMap.values()),
     verificationAdvice: parsed.verificationAdvice,
+    tokenUsage: usage,
   };
 }

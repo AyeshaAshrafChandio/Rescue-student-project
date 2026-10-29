@@ -202,6 +202,11 @@ export interface AnalysisResult {
     description: string;
     testCommand: string;
   }>;
+  tokenUsage?: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  };
 }
 
 /**
@@ -783,6 +788,11 @@ export interface WorkspaceResponse {
     newContent: string;
   }>;
   verificationAdvice: string;
+  tokenUsage?: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  };
 }
 
 /**
