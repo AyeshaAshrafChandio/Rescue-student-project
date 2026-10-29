@@ -54,6 +54,8 @@ export const analysisReports = pgTable('analysis_reports', {
   featuresBrokenJson: text('features_broken_json').notNull(),
   featuresMissingJson: text('features_missing_json').notNull(),
   featuresUnverifiableJson: text('features_unverifiable_json').notNull(),
+  aiProvider: text('ai_provider'),
+  modelUsed: text('model_used'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
@@ -74,6 +76,8 @@ export const rescueTasks = pgTable('rescue_tasks', {
   proposedChangesJson: text('proposed_changes_json'),
   verificationOutput: text('verification_output'),
   isVerified: boolean('is_verified').default(false).notNull(),
+  aiProvider: text('ai_provider'),
+  modelUsed: text('model_used'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });

@@ -80,8 +80,22 @@ export interface RescueTask {
   }>;
   verificationOutput?: string;
   isVerified?: boolean;
+  aiProvider?: AiProvider;
+  modelUsed?: string;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export type AiProvider = 'gemini' | 'nebius';
+
+export interface AiProviderInfo {
+  id: AiProvider;
+  name: string;
+  model: string;
+  configured: boolean;
+  active: boolean;
+  badge: string;
+  description: string;
 }
 
 export interface AnalysisReport {
@@ -95,6 +109,8 @@ export interface AnalysisReport {
   featuresBroken: FeatureBroken[];
   featuresMissing: FeatureMissing[];
   featuresUnverifiable: FeatureUnverifiable[];
+  aiProvider?: AiProvider;
+  modelUsed?: string;
   createdAt: string;
 }
 

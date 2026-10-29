@@ -9,10 +9,12 @@ import {
   RotateCcw,
   AlertTriangle,
   Sparkles,
+  Cpu,
 } from 'lucide-react';
-import { Project, AnalysisReport } from '../types/index.ts';
+import { Project, AnalysisReport, AiProvider, AiProviderInfo } from '../types/index.ts';
 import { HealthGauge } from '../components/HealthGauge.tsx';
 import { RetryStatusInfo } from '../lib/project-service.ts';
+import { AiProviderSelector, AiProviderBadge } from '../components/AiProviderSelector.tsx';
 
 interface AnalysisViewProps {
   project: Project;
@@ -22,6 +24,9 @@ interface AnalysisViewProps {
   retryStatus?: RetryStatusInfo | null;
   analysisError?: string | null;
   onRetryAnalysis?: () => void;
+  selectedAiProvider?: AiProvider;
+  onSelectAiProvider?: (provider: AiProvider) => void;
+  aiProviders?: AiProviderInfo[];
 }
 
 export const AnalysisView: React.FC<AnalysisViewProps> = ({
@@ -32,7 +37,12 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({
   retryStatus = null,
   analysisError = null,
   onRetryAnalysis,
+  selectedAiProvider = 'nebius',
+  onSelectAiProvider,
+  aiProviders = [],
 }) => {
+  const isNebiusSelected = selectedAiProvider === 'nebius';
+
   if (!report) {
     const showErrorState = !isAnalyzing && (Boolean(analysisError) || project.status === 'failed');
 
@@ -44,22 +54,33 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({
           </div>
 
           <div className="space-y-2">
-            <span className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/20">
-              <span>Gemini High Demand (503 UNAVAILABLE)</span>
-            </span>
+            <div className="flex justify-center">
+              <AiProviderBadge provider={selectedAiProvider} />
+            </div>
             <h3 className="text-xl sm:text-2xl font-black text-white">
-              Deep Analysis Temporarily Unavailable
+              Codebase Analysis Failed
             </h3>
             <p className="text-xs sm:text-sm text-slate-300 max-w-lg mx-auto leading-relaxed break-words">
               {analysisError ||
-                'Gemini API is currently experiencing high demand. Automatic retries with exponential backoff were attempted, and no synthetic analysis was generated.'}
+                `Inference failed on ${isNebiusSelected ? 'NVIDIA Nemotron via Nebius Token Factory' : 'Google Gemini'}. Automatic retries were attempted.`}
             </p>
           </div>
 
+          {onSelectAiProvider && (
+            <div className="text-left max-w-xl mx-auto pt-2">
+              <AiProviderSelector
+                currentProvider={selectedAiProvider}
+                onSelectProvider={onSelectAiProvider}
+                providers={aiProviders}
+              />
+            </div>
+          )}
+
           <div className="bg-slate-950/70 border border-slate-800 rounded-2xl p-4 text-left text-xs text-slate-400 space-y-1.5">
-            <div className="font-semibold text-slate-200">Why didn&apos;t we generate a fallback report?</div>
+            <div className="font-semibold text-slate-200">Zero Synthetic Fallback Guarantee</div>
             <p>
-              Student Project Rescue only reports genuine AST &amp; Gemini findings from your real source files. Your project files are safely saved in PostgreSQL and ready to analyze as soon as capacity clears.
+              Student Project Rescue strictly analyzes your real source files using verified AST inspection.
+              We never fabricate dummy findings when an AI provider is unavailable. You can retry with the current provider or switch providers above.
             </p>
           </div>
 
@@ -70,7 +91,9 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({
                 className="w-full sm:w-auto inline-flex items-center justify-center space-x-2 bg-gradient-to-r from-amber-500 to-rose-600 hover:from-amber-400 hover:to-rose-500 text-white font-bold text-xs sm:text-sm px-6 py-3 rounded-xl shadow-lg shadow-rose-500/20 transition transform hover:-translate-y-0.5"
               >
                 <RotateCcw className="w-4 h-4 shrink-0" />
-                <span>Retry Deep Gemini Analysis</span>
+                <span>
+                  Retry Analysis with {isNebiusSelected ? 'NVIDIA Nemotron' : 'Google Gemini'}
+                </span>
               </button>
             </div>
           )}
@@ -80,17 +103,23 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({
 
     return (
       <div className="text-center py-16 sm:py-20 bg-slate-900/60 rounded-3xl border border-slate-800 p-6 sm:p-10 space-y-5 max-w-2xl mx-auto my-8">
-        <div className="w-14 h-14 rounded-2xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center mx-auto animate-spin border border-indigo-500/30">
-          <Code2 className="w-7 h-7" />
+        <div className={`w-14 h-14 rounded-2xl flex items-center justify-center mx-auto animate-spin border ${
+          isNebiusSelected ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30'
+        }`}>
+          {isNebiusSelected ? <Cpu className="w-7 h-7" /> : <Code2 className="w-7 h-7" />}
         </div>
 
         <div className="space-y-2">
+          <div className="flex justify-center">
+            <AiProviderBadge provider={selectedAiProvider} />
+          </div>
           <h3 className="text-lg sm:text-xl font-bold text-white">
             Generating Deep Codebase Rescue Report...
           </h3>
           <p className="text-xs sm:text-sm text-slate-400 max-w-md mx-auto leading-relaxed">
-            Gemini is inspecting the AST, checking dependencies, syntax, and comparing{' '}
-            <strong className="text-slate-200">{project.title}</strong> against your requirements.
+            {isNebiusSelected ? 'NVIDIA Nemotron-3-Nano-30B-A3B via Nebius Token Factory' : 'Google Gemini'}{' '}
+            is inspecting the AST, checking dependencies, syntax, and comparing{' '}
+            <strong className="text-slate-200">{project.title}</strong> against requirements.
           </p>
         </div>
 
@@ -108,10 +137,12 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({
           <div className="pt-2">
             <button
               onClick={onRetryAnalysis}
-              className="inline-flex items-center space-x-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs px-5 py-2.5 rounded-xl transition"
+              className={`inline-flex items-center space-x-2 text-white font-semibold text-xs px-5 py-2.5 rounded-xl transition ${
+                isNebiusSelected ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-indigo-600 hover:bg-indigo-500'
+              }`}
             >
               <Sparkles className="w-4 h-4" />
-              <span>Start Gemini Analysis Now</span>
+              <span>Start Analysis Now ({isNebiusSelected ? 'NVIDIA Nemotron' : 'Google Gemini'})</span>
             </button>
           </div>
         )}
@@ -129,6 +160,7 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({
               <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20">
                 Rescue Report
               </span>
+              <AiProviderBadge provider={report.aiProvider} model={report.modelUsed} />
               <span className="text-xs text-slate-400 font-mono">
                 {new Date(report.createdAt).toLocaleString()}
               </span>
@@ -182,6 +214,15 @@ export const AnalysisView: React.FC<AnalysisViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* AI Provider Switcher Card */}
+      {onSelectAiProvider && (
+        <AiProviderSelector
+          currentProvider={selectedAiProvider}
+          onSelectProvider={onSelectAiProvider}
+          providers={aiProviders}
+        />
+      )}
 
       {/* 4 Quadrants Breakdown */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

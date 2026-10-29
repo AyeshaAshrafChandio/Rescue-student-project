@@ -15,6 +15,12 @@ import {
   getPublicFirebaseClientConfig,
   ensureFirebaseAuthorizedDomains,
 } from '../lib/firebase-admin.ts';
+import {
+  getAvailableAiProviders,
+  runUnifiedCodebaseAnalysis,
+  runUnifiedTaskDiagnosis,
+  type SupportedAiProvider,
+} from './ai-router.ts';
 import { analyzeCodebaseWithGemini, diagnoseAndProposeCodeFix } from './gemini.ts';
 import { runRealCodeVerification, reconstructCanonicalRepoTree } from './verifier.ts';
 import { fetchGitHubRepository } from './github.ts';
@@ -25,6 +31,16 @@ import {
 } from './cloudinary.ts';
 
 export const apiRouter = Router();
+
+// AI Providers info endpoint (Nebius Token Factory & Google Gemini status)
+apiRouter.get('/ai/providers', async (_req, res: Response) => {
+  try {
+    const providerInfo = getAvailableAiProviders();
+    return res.json(providerInfo);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Failed to get AI providers.' });
+  }
+});
 
 // Public runtime Firebase client configuration endpoint (also ensures request domain is authorized)
 apiRouter.get('/auth/firebase-config', async (req, res: Response) => {
@@ -346,8 +362,12 @@ apiRouter.post('/projects/:id/analyze', requireAuth, async (req: AuthRequest, re
       })
       .where(eq(projects.id, id));
 
-    // Call real Gemini analysis (includes automatic server-side exponential backoff)
-    const analysis = await analyzeCodebaseWithGemini({
+    const requestedProvider: SupportedAiProvider =
+      req.body?.aiProvider === 'nebius' ? 'nebius' : 'gemini';
+
+    // Call unified analysis (NVIDIA Nemotron via Nebius Token Factory or Google Gemini)
+    const { analysis, aiProvider, modelUsed } = await runUnifiedCodebaseAnalysis({
+      provider: requestedProvider,
       title: project.title,
       requirements: project.requirementsText || '',
       files: canonicalFiles.map((f) => ({ filePath: f.filePath, content: f.content })),
@@ -368,6 +388,8 @@ apiRouter.post('/projects/:id/analyze', requireAuth, async (req: AuthRequest, re
       featuresBrokenJson: JSON.stringify(analysis.featuresBroken),
       featuresMissingJson: JSON.stringify(analysis.featuresMissing),
       featuresUnverifiableJson: JSON.stringify(analysis.featuresUnverifiable),
+      aiProvider,
+      modelUsed,
     });
 
     // Delete any old tasks before recreating
@@ -392,6 +414,8 @@ apiRouter.post('/projects/:id/analyze', requireAuth, async (req: AuthRequest, re
         estimatedMinutes: t.estimatedMinutes || 15,
         testCommand: safeTestCmd,
         isVerified: false,
+        aiProvider,
+        modelUsed,
       };
       await db.insert(rescueTasks).values(taskRecord);
       initialTasks.push({
@@ -423,6 +447,8 @@ apiRouter.post('/projects/:id/analyze', requireAuth, async (req: AuthRequest, re
         featuresBroken: analysis.featuresBroken,
         featuresMissing: analysis.featuresMissing,
         featuresUnverifiable: analysis.featuresUnverifiable,
+        aiProvider,
+        modelUsed,
         createdAt: new Date().toISOString(),
       },
       tasks: initialTasks,
@@ -451,10 +477,14 @@ apiRouter.post('/projects/:id/analyze', requireAuth, async (req: AuthRequest, re
     }
 
     const statusCode = error.statusCode || 503;
+    const requestedProvider = req.body?.aiProvider === 'nebius' ? 'nebius' : 'gemini';
     return res.status(statusCode).json({
-      error: error.message || 'Analysis failed due to temporary Gemini API unavailability.',
+      error:
+        error.message ||
+        `Analysis failed on ${requestedProvider === 'nebius' ? 'NVIDIA Nemotron via Nebius Token Factory' : 'Google Gemini'}.`,
+      provider: requestedProvider,
       retryable: error.retryable ?? true,
-      attemptsMade: error.attemptsMade || 4,
+      attemptsMade: error.attemptsMade || 1,
     });
   }
 });
@@ -497,6 +527,8 @@ apiRouter.get('/projects/:id/report', requireAuth, async (req: AuthRequest, res:
       featuresBroken: JSON.parse(r.featuresBrokenJson || '[]'),
       featuresMissing: JSON.parse(r.featuresMissingJson || '[]'),
       featuresUnverifiable: JSON.parse(r.featuresUnverifiableJson || '[]'),
+      aiProvider: r.aiProvider || 'gemini',
+      modelUsed: r.modelUsed || 'gemini-flash-latest',
       createdAt: r.createdAt,
     });
   } catch (error: any) {
@@ -530,6 +562,8 @@ apiRouter.get('/projects/:id/tasks', requireAuth, async (req: AuthRequest, res: 
       ...t,
       targetFiles: JSON.parse(t.targetFilesJson || '[]'),
       proposedChanges: t.proposedChangesJson ? JSON.parse(t.proposedChangesJson) : [],
+      aiProvider: t.aiProvider || 'gemini',
+      modelUsed: t.modelUsed || 'gemini-flash-latest',
     })).sort((a: any, b: any) => a.taskOrder - b.taskOrder);
 
     return res.json(formatted);
@@ -545,7 +579,7 @@ apiRouter.post('/projects/:id/tasks/:taskId/ai-fix', requireAuth, async (req: Au
     const db = await getDb();
     const userId = req.user!.uid;
     const { id, taskId } = req.params;
-    const { userMessage } = req.body;
+    const { userMessage, aiProvider: clientProvider } = req.body;
 
     const proj = await db
       .select()
@@ -585,36 +619,52 @@ apiRouter.post('/projects/:id/tasks/:taskId/ai-fix', requireAuth, async (req: Au
     const contextFiles =
       matchingFiles.length > 0 ? matchingFiles : allFiles.slice(0, 10);
 
-    // Call real Gemini fix diagnosis with full repository file paths and complete target files
-    const solution = await diagnoseAndProposeCodeFix({
-      taskTitle: task.title,
-      taskDescription: task.description,
-      category: task.category,
-      userMessage,
-      allProjectFilePaths: allFiles.map((f: any) => f.filePath),
-      allProjectFiles: allFiles.map((f: any) => ({ filePath: f.filePath, content: f.content })),
-      targetFiles: contextFiles.map((f: any) => ({ filePath: f.filePath, content: f.content })),
-      previousVerificationOutput: task.verificationOutput || undefined,
+    const requestedProvider: SupportedAiProvider =
+      clientProvider === 'nebius' ? 'nebius' : clientProvider === 'gemini' ? 'gemini' : (task.aiProvider as SupportedAiProvider) || 'gemini';
+
+    // Call unified AI fix diagnosis (NVIDIA Nemotron via Nebius Token Factory or Google Gemini)
+    const { solution, aiProvider, modelUsed } = await runUnifiedTaskDiagnosis({
+      provider: requestedProvider,
+      taskInput: {
+        taskTitle: task.title,
+        taskDescription: task.description,
+        category: task.category,
+        userMessage,
+        allProjectFilePaths: allFiles.map((f: any) => f.filePath),
+        allProjectFiles: allFiles.map((f: any) => ({ filePath: f.filePath, content: f.content })),
+        targetFiles: contextFiles.map((f: any) => ({ filePath: f.filePath, content: f.content })),
+        previousVerificationOutput: task.verificationOutput || undefined,
+      },
     });
 
-    // Save proposed changes and diagnosis to task in PostgreSQL
+    // Save proposed changes, diagnosis, provider and model to task in PostgreSQL
     await db
       .update(rescueTasks)
       .set({
         rootCauseAnalysis: solution.rootCause,
         proposedChangesJson: JSON.stringify(solution.proposedChanges),
+        aiProvider,
+        modelUsed,
         updatedAt: new Date(),
       })
       .where(eq(rescueTasks.id, taskId));
 
-    return res.json(solution);
+    return res.json({
+      ...solution,
+      aiProvider,
+      modelUsed,
+    });
   } catch (error: any) {
     console.error('Error generating AI fix:', error);
     const statusCode = error.statusCode || 503;
+    const requestedProvider = req.body?.aiProvider === 'nebius' ? 'nebius' : 'gemini';
     return res.status(statusCode).json({
-      error: error.message || 'AI diagnosis failed due to temporary Gemini API unavailability.',
+      error:
+        error.message ||
+        `AI diagnosis failed on ${requestedProvider === 'nebius' ? 'NVIDIA Nemotron via Nebius Token Factory' : 'Google Gemini'}.`,
+      provider: requestedProvider,
       retryable: error.retryable ?? true,
-      attemptsMade: error.attemptsMade || 4,
+      attemptsMade: error.attemptsMade || 1,
     });
   }
 });

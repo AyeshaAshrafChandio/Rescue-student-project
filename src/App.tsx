@@ -23,6 +23,8 @@ import {
   ProjectFile,
   AnalysisReport,
   RescueTask,
+  AiProvider,
+  AiProviderInfo,
 } from './types/index.ts';
 import {
   fetchUserProjects,
@@ -35,6 +37,7 @@ import {
   applyTaskChanges,
   verifyTaskInSandbox,
   requestAiFixForTask,
+  fetchAiProviders,
   RetryStatusInfo,
 } from './lib/project-service.ts';
 
@@ -111,6 +114,42 @@ function MainApp() {
   const [analysisRetryStatus, setAnalysisRetryStatus] = useState<RetryStatusInfo | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
 
+  const [selectedAiProvider, setSelectedAiProvider] = useState<AiProvider>(() => {
+    try {
+      const saved = localStorage.getItem('project_rescue_ai_provider');
+      if (saved === 'gemini' || saved === 'nebius') return saved;
+    } catch {
+      // ignore
+    }
+    return 'nebius';
+  });
+  const [aiProviders, setAiProviders] = useState<AiProviderInfo[]>([]);
+
+  useEffect(() => {
+    fetchAiProviders()
+      .then((info) => {
+        setAiProviders(info.providers);
+        try {
+          const saved = localStorage.getItem('project_rescue_ai_provider');
+          if (!saved) {
+            setSelectedAiProvider(info.defaultProvider);
+          }
+        } catch {
+          // ignore
+        }
+      })
+      .catch((err) => console.warn('Failed to load AI providers info:', err));
+  }, []);
+
+  const handleSelectAiProvider = useCallback((provider: AiProvider) => {
+    setSelectedAiProvider(provider);
+    try {
+      localStorage.setItem('project_rescue_ai_provider', provider);
+    } catch {
+      // ignore
+    }
+  }, []);
+
   const executeProjectAnalysis = async (targetProject: Project) => {
     if (!requireAuthForAction({ view: 'analysis', projectId: targetProject.id, label: 'Project Analysis' })) {
       return;
@@ -133,7 +172,8 @@ function MainApp() {
       const analysisOutput = await runProjectAnalysis(
         targetProject.id,
         token,
-        info => setAnalysisRetryStatus(info)
+        info => setAnalysisRetryStatus(info),
+        selectedAiProvider
       );
 
       setActiveReport(analysisOutput.report);
@@ -154,7 +194,9 @@ function MainApp() {
       console.error('Error analyzing project:', err);
       const errMsg =
         err.message ||
-        'Gemini API is currently experiencing high demand (503 UNAVAILABLE). Please click Retry Analysis.';
+        `Analysis failed on ${
+          selectedAiProvider === 'nebius' ? 'NVIDIA Nemotron via Nebius Token Factory' : 'Google Gemini'
+        }. Please click Retry Analysis.`;
       setAnalysisError(errMsg);
 
       const failedProj: Project = {
@@ -603,7 +645,8 @@ function MainApp() {
   const handleAskAiFix = async (
     task: RescueTask,
     userMessage?: string,
-    onRetryStatus?: (info: RetryStatusInfo) => void
+    onRetryStatus?: (info: RetryStatusInfo) => void,
+    overrideProvider?: AiProvider
   ) => {
     if (!activeProject) throw new Error('No active project.');
     if (
@@ -622,7 +665,8 @@ function MainApp() {
       task.id,
       userMessage,
       token,
-      onRetryStatus
+      onRetryStatus,
+      overrideProvider || selectedAiProvider
     );
   };
 
@@ -652,6 +696,9 @@ function MainApp() {
         onOpenCreateModal={handleOpenCreateModal}
         focusVerification={focusVerification}
         reportSection={reportSection}
+        selectedAiProvider={selectedAiProvider}
+        onSelectAiProvider={handleSelectAiProvider}
+        aiProviders={aiProviders}
       />
 
       <div className="flex-1 flex max-w-[1600px] w-full mx-auto min-w-0">
@@ -664,6 +711,9 @@ function MainApp() {
           onOpenCreateModal={handleOpenCreateModal}
           focusVerification={focusVerification}
           reportSection={reportSection}
+          selectedAiProvider={selectedAiProvider}
+          onSelectAiProvider={handleSelectAiProvider}
+          aiProviders={aiProviders}
         />
 
         <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 pt-5 sm:pt-8 min-w-0">
@@ -776,6 +826,9 @@ function MainApp() {
               retryStatus={analysisRetryStatus}
               analysisError={analysisError}
               onRetryAnalysis={() => handleRetryAnalysis(activeProject)}
+              selectedAiProvider={selectedAiProvider}
+              onSelectAiProvider={handleSelectAiProvider}
+              aiProviders={aiProviders}
             />
           )}
 
@@ -807,6 +860,9 @@ function MainApp() {
                 onProceedToNextTask={handleProceedToNextTask}
                 onProceedToFinalCheck={() => handleNavigateView('report', { reportSection: 'check' })}
                 focusVerification={focusVerification}
+                selectedAiProvider={selectedAiProvider}
+                onSelectAiProvider={handleSelectAiProvider}
+                aiProviders={aiProviders}
               />
             ) : (
               <div className="max-w-xl mx-auto my-12 bg-slate-900/90 border border-slate-800 rounded-3xl p-8 text-center space-y-4">
@@ -816,8 +872,8 @@ function MainApp() {
                 </h3>
                 <p className="text-xs text-slate-400 leading-relaxed">
                   {isAnalyzing
-                    ? 'Gemini is currently inspecting your codebase to generate prioritized rescue tasks.'
-                    : 'Complete the Deep Gemini Analysis to populate actionable rescue tasks for the AI Workspace.'}
+                    ? 'AI is currently inspecting your codebase to generate prioritized rescue tasks.'
+                    : 'Complete the Codebase Analysis to populate actionable rescue tasks for the AI Workspace.'}
                 </p>
                 <button
                   onClick={() => handleRetryAnalysis(activeProject)}

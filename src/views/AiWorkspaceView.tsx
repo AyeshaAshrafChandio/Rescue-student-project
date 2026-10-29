@@ -14,9 +14,10 @@ import {
   HelpCircle,
   Eye,
 } from 'lucide-react';
-import { Project, RescueTask, ProjectFile } from '../types/index.ts';
+import { Project, RescueTask, ProjectFile, AiProvider, AiProviderInfo } from '../types/index.ts';
 import { DiffViewer } from '../components/DiffViewer.tsx';
 import { RetryStatusInfo } from '../lib/project-service.ts';
+import { AiProviderSelector, AiProviderBadge } from '../components/AiProviderSelector.tsx';
 
 interface AiWorkspaceViewProps {
   project: Project;
@@ -29,11 +30,22 @@ interface AiWorkspaceViewProps {
   onAskAiFix: (
     task: RescueTask,
     userMessage?: string,
-    onRetryStatus?: (info: RetryStatusInfo) => void
-  ) => Promise<{ explanation: string; rootCause: string; proposedChanges: Array<{ filePath: string; description: string; newContent: string }>; verificationAdvice?: string }>;
+    onRetryStatus?: (info: RetryStatusInfo) => void,
+    aiProvider?: AiProvider
+  ) => Promise<{
+    explanation: string;
+    rootCause: string;
+    proposedChanges: Array<{ filePath: string; description: string; newContent: string }>;
+    verificationAdvice?: string;
+    aiProvider?: AiProvider;
+    modelUsed?: string;
+  }>;
   onProceedToNextTask: () => void;
   onProceedToFinalCheck?: () => void;
   focusVerification?: boolean;
+  selectedAiProvider?: AiProvider;
+  onSelectAiProvider?: (provider: AiProvider) => void;
+  aiProviders?: AiProviderInfo[];
 }
 
 export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
@@ -48,6 +60,9 @@ export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
   onProceedToNextTask,
   onProceedToFinalCheck,
   focusVerification = false,
+  selectedAiProvider = 'nebius',
+  onSelectAiProvider,
+  aiProviders = [],
 }) => {
   const [activeFileTab, setActiveFileTab] = useState<string>(
     currentTask.targetFiles?.[0] || (projectFiles[0]?.filePath || '')
@@ -122,7 +137,12 @@ export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
     setLastAiCustomMessage(msgToUse);
 
     try {
-      const data = await onAskAiFix(currentTask, msgToUse, info => setAiRetryStatus(info));
+      const data = await onAskAiFix(
+        currentTask,
+        msgToUse,
+        (info) => setAiRetryStatus(info),
+        selectedAiProvider
+      );
 
       setAiExplanation(data.explanation + '\n\n**Root Cause:** ' + data.rootCause);
       setProposedChanges(data.proposedChanges || []);
@@ -131,7 +151,12 @@ export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
       }
       setUserCustomPrompt('');
     } catch (err: any) {
-      setWorkspaceError(err.message || 'Gemini AI diagnosis failed after automatic retries.');
+      setWorkspaceError(
+        err.message ||
+          `AI diagnosis failed on ${
+            selectedAiProvider === 'nebius' ? 'NVIDIA Nemotron via Nebius Token Factory' : 'Google Gemini'
+          }.`
+      );
     } finally {
       setIsDiagnosing(false);
       setAiRetryStatus(null);
@@ -322,6 +347,10 @@ export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
                   <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
                     Proposed Code Changes ({proposedChanges.length})
                   </span>
+                  <AiProviderBadge
+                    provider={currentTask.aiProvider || selectedAiProvider}
+                    model={currentTask.modelUsed}
+                  />
                   <div className="flex flex-wrap gap-1">
                     {proposedChanges.map(p => (
                       <button
@@ -374,19 +403,39 @@ export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl space-y-4 min-w-0">
             <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-800">
               <div className="flex items-center space-x-2 text-white font-bold text-sm">
-                <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-amber-500 to-rose-500 flex items-center justify-center shadow-sm shrink-0">
+                <div
+                  className={`w-7 h-7 rounded-lg flex items-center justify-center shadow-sm shrink-0 ${
+                    selectedAiProvider === 'nebius'
+                      ? 'bg-gradient-to-tr from-emerald-600 to-teal-500'
+                      : 'bg-gradient-to-tr from-indigo-600 to-blue-500'
+                  }`}
+                >
                   <Sparkles className="w-4 h-4 text-white" />
                 </div>
-                <span>Gemini Autonomous Code Engine</span>
+                <span>Autonomous Code Engine</span>
               </div>
-              <span className="text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                Active Engine
-              </span>
+              <div className="flex items-center space-x-1.5">
+                {onSelectAiProvider && (
+                  <AiProviderSelector
+                    compact
+                    currentProvider={selectedAiProvider}
+                    onSelectProvider={onSelectAiProvider}
+                    providers={aiProviders}
+                  />
+                )}
+              </div>
             </div>
 
             {/* Explanation or Prompt */}
             {aiExplanation ? (
               <div className="space-y-3">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-400 font-semibold">Diagnosis &amp; Solution:</span>
+                  <AiProviderBadge
+                    provider={currentTask.aiProvider || selectedAiProvider}
+                    model={currentTask.modelUsed}
+                  />
+                </div>
                 <div className="bg-slate-950/80 p-4 rounded-xl border border-slate-800 text-xs text-slate-200 leading-relaxed whitespace-pre-wrap break-words max-h-60 overflow-y-auto font-sans">
                   {aiExplanation}
                 </div>
@@ -396,23 +445,34 @@ export const AiWorkspaceView: React.FC<AiWorkspaceViewProps> = ({
                     disabled={isDiagnosing}
                     className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold py-2 rounded-xl border border-slate-700 transition"
                   >
-                    {isDiagnosing ? 'Analyzing...' : 'Re-diagnose Task'}
+                    {isDiagnosing
+                      ? 'Analyzing...'
+                      : `Re-diagnose (${selectedAiProvider === 'nebius' ? 'NVIDIA Nemotron' : 'Google Gemini'})`}
                   </button>
                 </div>
               </div>
             ) : (
               <div className="text-center py-6 space-y-3">
                 <p className="text-xs text-slate-400 leading-relaxed break-words">
-                  The Autonomous Code Engine will inspect <strong>{currentTask.targetFiles?.join(', ') || 'the project files'}</strong>,
+                  The Autonomous Code Engine will inspect{' '}
+                  <strong>{currentTask.targetFiles?.join(', ') || 'the project files'}</strong>,
                   find the root cause of the bug or missing requirement, and write the complete corrected code.
                 </p>
                 <button
                   onClick={() => handleDiagnoseTask()}
                   disabled={isDiagnosing}
-                  className="w-full sm:w-auto bg-gradient-to-r from-amber-600 to-rose-600 hover:from-amber-500 hover:to-rose-500 text-white font-bold text-xs px-5 py-2.5 rounded-xl shadow-lg shadow-rose-500/20 transition transform hover:-translate-y-0.5"
+                  className={`w-full sm:w-auto text-white font-bold text-xs px-5 py-2.5 rounded-xl shadow-lg transition transform hover:-translate-y-0.5 ${
+                    selectedAiProvider === 'nebius'
+                      ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-emerald-500/20'
+                      : 'bg-gradient-to-r from-indigo-600 to-rose-600 hover:from-indigo-500 hover:to-rose-500 shadow-rose-500/20'
+                  }`}
                 >
                   <Sparkles className="w-4 h-4 inline-block mr-1.5" />
-                  <span>{isDiagnosing ? 'Analyzing Codebase...' : 'Diagnose & Propose Solution'}</span>
+                  <span>
+                    {isDiagnosing
+                      ? 'Analyzing Codebase...'
+                      : `Diagnose with ${selectedAiProvider === 'nebius' ? 'NVIDIA Nemotron' : 'Google Gemini'}`}
+                  </span>
                 </button>
               </div>
             )}

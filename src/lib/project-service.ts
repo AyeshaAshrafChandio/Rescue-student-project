@@ -3,6 +3,8 @@ import {
   ProjectFile,
   AnalysisReport,
   RescueTask,
+  AiProvider,
+  AiProviderInfo,
 } from '../types/index.ts';
 
 export interface RetryStatusInfo {
@@ -10,6 +12,18 @@ export interface RetryStatusInfo {
   maxAttempts: number;
   delayMs: number;
   message: string;
+}
+
+// 0. Fetch available AI providers status (Nebius Token Factory & Google Gemini)
+export async function fetchAiProviders(): Promise<{
+  defaultProvider: AiProvider;
+  providers: AiProviderInfo[];
+}> {
+  const res = await fetch('/api/ai/providers');
+  if (!res.ok) {
+    throw new Error('Failed to fetch AI providers configuration.');
+  }
+  return await res.json();
 }
 
 function getAuthHeaders(token?: string | null): Record<string, string> {
@@ -170,19 +184,26 @@ export async function fetchProjectFiles(projectId: string, token?: string | null
   return await res.json();
 }
 
-// 5. Run Deep Gemini Analysis and store in PostgreSQL (with automatic exponential backoff)
+// 5. Run Deep AI Analysis and store in PostgreSQL (supporting Nebius Token Factory & Google Gemini)
 export async function runProjectAnalysis(
   projectId: string,
   token?: string | null,
-  onRetryStatus?: (info: RetryStatusInfo) => void
+  onRetryStatus?: (info: RetryStatusInfo) => void,
+  aiProvider?: AiProvider
 ): Promise<{ report: AnalysisReport; tasks: RescueTask[] }> {
+  const providerLabel =
+    aiProvider === 'nebius'
+      ? 'NVIDIA Nemotron (Nebius Token Factory)'
+      : 'Google Gemini';
+
   return fetchWithExponentialBackoff<{ report: AnalysisReport; tasks: RescueTask[] }>(
     `/api/projects/${projectId}/analyze`,
     {
       method: 'POST',
       headers: getAuthHeaders(token),
+      body: JSON.stringify({ aiProvider }),
     },
-    'Codebase analysis failed due to temporary Gemini API high demand.',
+    `Codebase analysis failed on ${providerLabel}.`,
     onRetryStatus,
     3,
     2000
@@ -217,32 +238,42 @@ export async function fetchRescueTasks(projectId: string, token?: string | null)
   return await res.json();
 }
 
-// 8. Request AI Code Diagnosis & Replacement (with automatic exponential backoff)
+// 8. Request AI Code Diagnosis & Replacement (supporting Nebius Token Factory & Google Gemini)
 export async function requestAiFixForTask(
   projectId: string,
   taskId: string,
   userMessage?: string,
   token?: string | null,
-  onRetryStatus?: (info: RetryStatusInfo) => void
+  onRetryStatus?: (info: RetryStatusInfo) => void,
+  aiProvider?: AiProvider
 ): Promise<{
   explanation: string;
   rootCause: string;
   proposedChanges: Array<{ filePath: string; description: string; newContent: string }>;
   verificationAdvice: string;
+  aiProvider?: AiProvider;
+  modelUsed?: string;
 }> {
+  const providerLabel =
+    aiProvider === 'nebius'
+      ? 'NVIDIA Nemotron (Nebius Token Factory)'
+      : 'Google Gemini';
+
   return fetchWithExponentialBackoff<{
     explanation: string;
     rootCause: string;
     proposedChanges: Array<{ filePath: string; description: string; newContent: string }>;
     verificationAdvice: string;
+    aiProvider?: AiProvider;
+    modelUsed?: string;
   }>(
     `/api/projects/${projectId}/tasks/${taskId}/ai-fix`,
     {
       method: 'POST',
       headers: getAuthHeaders(token),
-      body: JSON.stringify({ userMessage }),
+      body: JSON.stringify({ userMessage, aiProvider }),
     },
-    'AI Code Diagnosis failed due to temporary Gemini API high demand.',
+    `AI Code Diagnosis failed on ${providerLabel}.`,
     onRetryStatus,
     3,
     2000

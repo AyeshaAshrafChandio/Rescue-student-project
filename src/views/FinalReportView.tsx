@@ -13,6 +13,7 @@ import { downloadProjectAsZip } from '../lib/zip-utils.ts';
 import { archiveProjectToCloudinary } from '../lib/project-service.ts';
 import { useAuth } from '../context/AuthContext.tsx';
 import { HealthGauge } from '../components/HealthGauge.tsx';
+import { AiProviderBadge } from '../components/AiProviderSelector.tsx';
 
 interface FinalReportViewProps {
   project: Project;
@@ -128,9 +129,14 @@ export const FinalReportView: React.FC<FinalReportViewProps> = ({
           <Award className="w-9 h-9" />
         </div>
 
-        <div className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 text-xs font-semibold mb-3 border border-emerald-500/20">
-          <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
-          <span>Project Submission Readiness Report</span>
+        <div className="flex flex-wrap items-center justify-center gap-2 mb-3">
+          <div className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 text-xs font-semibold border border-emerald-500/20">
+            <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+            <span>Project Submission Readiness Report</span>
+          </div>
+          {tasks[0]?.aiProvider && (
+            <AiProviderBadge provider={tasks[0].aiProvider} model={tasks[0].modelUsed} />
+          )}
         </div>
 
         <h1 className="text-2xl sm:text-4xl font-black text-white tracking-tight break-words">
@@ -275,6 +281,9 @@ export const FinalReportView: React.FC<FinalReportViewProps> = ({
                     <span className="text-[10px] font-mono uppercase bg-slate-900 px-2 py-0.5 rounded text-slate-400">
                       {t.category}
                     </span>
+                    {t.aiProvider && (
+                      <AiProviderBadge provider={t.aiProvider} model={t.modelUsed} />
+                    )}
                   </div>
                   <p className="text-xs text-slate-300 sm:ml-7 break-words">{t.description}</p>
                   {t.targetFiles && (

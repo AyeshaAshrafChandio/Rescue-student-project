@@ -18,7 +18,8 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.tsx';
-import { Project } from '../types/index.ts';
+import { Project, AiProvider, AiProviderInfo } from '../types/index.ts';
+import { AiProviderSelector } from './AiProviderSelector.tsx';
 
 export type NavView = 'dashboard' | 'analysis' | 'plan' | 'workspace' | 'report';
 
@@ -36,6 +37,9 @@ interface NavbarProps {
   onOpenCreateModal: () => void;
   focusVerification?: boolean;
   reportSection?: 'check' | 'report';
+  selectedAiProvider?: AiProvider;
+  onSelectAiProvider?: (provider: AiProvider) => void;
+  aiProviders?: AiProviderInfo[];
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -45,6 +49,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenCreateModal,
   focusVerification = false,
   reportSection = 'report',
+  selectedAiProvider = 'nebius',
+  onSelectAiProvider,
+  aiProviders = [],
 }) => {
   const { user, openAuthModal, signInWithGoogle, signOut } = useAuth();
 
@@ -162,8 +169,17 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
           </nav>
 
-          {/* Right Action: Project status & User Auth */}
+          {/* Right Action: Project status, AI Provider Selector & User Auth */}
           <div className="flex items-center space-x-2 sm:space-x-3 shrink-0">
+            {onSelectAiProvider && (
+              <AiProviderSelector
+                compact
+                currentProvider={selectedAiProvider}
+                onSelectProvider={onSelectAiProvider}
+                providers={aiProviders}
+              />
+            )}
+
             {activeProject ? (
               <div className="hidden md:flex items-center bg-slate-800/80 border border-slate-700/60 rounded-lg px-2.5 py-1 text-xs space-x-2">
                 <span className="text-slate-400">Active:</span>
@@ -350,6 +366,9 @@ export const SideNavbar: React.FC<NavbarProps> = ({
   onOpenCreateModal,
   focusVerification = false,
   reportSection = 'report',
+  selectedAiProvider = 'nebius',
+  onSelectAiProvider,
+  aiProviders = [],
 }) => {
   const { user, openAuthModal, signInWithGoogle, signOut } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -589,8 +608,24 @@ export const SideNavbar: React.FC<NavbarProps> = ({
         )}
       </div>
 
+      {/* AI Inference Provider Selector in Sidebar */}
+      {onSelectAiProvider && (
+        <div className="pt-3 pb-2 border-t border-slate-800/80">
+          <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5 px-1">
+            AI Engine
+          </div>
+          <AiProviderSelector
+            compact
+            currentProvider={selectedAiProvider}
+            onSelectProvider={onSelectAiProvider}
+            providers={aiProviders}
+            className="w-full"
+          />
+        </div>
+      )}
+
       {/* Sidebar Footer: Firebase Auth Controls */}
-      <div className="pt-4 border-t border-slate-800/80">
+      <div className="pt-3 border-t border-slate-800/80">
         {user ? (
           <button
             onClick={() => {
