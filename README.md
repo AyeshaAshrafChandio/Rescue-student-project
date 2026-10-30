@@ -1,4 +1,4 @@
-# Student Project Rescue 🚑
+# Rescue Student Project  🚑
 
 > **Autonomous AI Engineering & Code Repair Engine**  
 > Built for the **Nebius × NVIDIA Global AI Hackathon** — integrating **NVIDIA Nemotron-3-Nano-30B-A3B** via **Nebius Token Factory**.
@@ -7,7 +7,7 @@
 
 ## 🌟 Overview
 
-**Student Project Rescue** helps university students, boot camp learners, and hackathon participants save broken projects before their strict deadlines. 
+**Rescue Student Project ** helps university students, boot camp learners, and hackathon participants save broken projects before their strict deadlines. 
 
 Unlike generic chatbots or hallucinated code assistants, Student Project Rescue:
 1. **Parses the real codebase** using rigorous AST syntax audits and module resolution verification.
@@ -35,7 +35,7 @@ The application features a built-in **AI Provider Selector** in the navigation h
 Users can choose their preferred inference engine dynamically. Each analysis report, task diagnosis, and proposed code fix clearly displays which AI provider and model generated the solution.
 
 ```
-                              [ Student Project Rescue ]
+                              [ Rescue Student Project  ]
                                          │
                  ┌───────────────────────┴───────────────────────┐
                  ▼                                               ▼
@@ -197,6 +197,54 @@ Sample JSON response:
 6. Verify fixes in the sandbox and download the restored project.
 
 ---
+
+🚀 How Nebius Token Factory Accelerated Our Workflow
+
+Nebius Token Factory helped us integrate NVIDIA Nemotron-3-Nano-30B-A3B into Rescue Student Project through an OpenAI-compatible API, without having to manage our own model-serving infrastructure.
+
+How We Used Nemotron
+
+We integrated NVIDIA Nemotron-3-Nano-30B-A3B for AI-assisted software development tasks, including:
+
+- Analyzing project context and coding requirements.
+- Identifying potential code issues and their root causes.
+- Generating suggested code fixes and implementation guidance.
+- Supporting AI-assisted debugging and feature development.
+
+Our application also supports Google Gemini as an alternative AI provider, allowing users to select their preferred model.
+
+How Nebius Accelerated Development
+
+Nebius Token Factory made it practical to connect our application to NVIDIA Nemotron using API-based inference. This allowed us to focus on building the application workflow instead of managing model deployment and serving infrastructure.
+
+Key benefits for our development process:
+
+- Fast Integration: Connected Nemotron through an OpenAI-compatible API.
+- Simplified Infrastructure: Used a shared inference endpoint instead of deploying dedicated GPU infrastructure.
+- Cost Visibility: Monitored token consumption and inference costs through the Nebius dashboard.
+- Flexible Model Selection: Integrated Nemotron alongside Google Gemini.
+
+Real Nebius Usage
+
+We tested live inference using NVIDIA Nemotron-3-Nano-30B-A3B through Nebius Token Factory and monitored the usage dashboard.
+
+For the selected October 29–30, 2026 reporting period, the dashboard showed:
+
+- Input tokens: 0.35M
+- Output tokens: 0.17M
+- Cached tokens: 0.15M
+- Total reported cost: $0.07, including VAT
+
+This usage information helped us understand inference consumption and monitor costs while developing our AI-powered coding workflow.
+
+Other Nebius Services
+
+Our project uses Nebius Token Factory for model inference. We did not deploy the complete application on Nebius AI Cloud GPU instances.
+
+Our Takeaway
+
+Nebius Token Factory helped us bring an NVIDIA open model into a practical AI-powered developer application. It reduced the infrastructure work involved in accessing model inference and allowed us to concentrate on building a workflow that helps students understand, debug, and improve their projects before deadlines.
+
 
 ## 📄 License
 
