@@ -65,6 +65,19 @@ export function getAvailableAiProviders(): {
   };
 }
 
+export function resolveRequestedProvider(
+  explicitProvider?: string | null,
+  contextFallback?: string | null
+): SupportedAiProvider {
+  if (explicitProvider === 'nebius') return 'nebius';
+  if (explicitProvider === 'gemini') return 'gemini';
+  if (contextFallback === 'nebius') return 'nebius';
+  if (contextFallback === 'gemini') return 'gemini';
+
+  const defaultProv = getAvailableAiProviders().defaultProvider;
+  return defaultProv;
+}
+
 export async function runUnifiedCodebaseAnalysis(params: {
   provider: SupportedAiProvider;
   title: string;

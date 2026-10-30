@@ -1111,10 +1111,10 @@ export async function runRealCodeVerification(
     if (cmdToRun.startsWith('esbuild ')) {
       for (const f of normalizedFiles) {
         const base = path.posix.basename(f.filePath);
-        if (f.filePath !== base) {
+        if (f.filePath !== base && !cmdToRun.includes(f.filePath)) {
           cmdToRun = cmdToRun.replace(
-            new RegExp(`(['"]?)${base.replace('.', '\\.')}\\1`, 'g'),
-            `"${f.filePath}"`
+            new RegExp(`(^|\\s|['"])${base.replace(/\\./g, '\\.')}(['"]|\\s|$)`, 'g'),
+            `$1"${f.filePath}"$2`
           );
         }
       }

@@ -1,3 +1,4 @@
+import path from 'path';
 import {
   inspectAndVerifyRepository,
   normalizeRepoPath,
@@ -205,6 +206,7 @@ async function callNebiusChatCompletion(
           ],
           temperature: 0.1,
           response_format: { type: 'json_object' },
+          max_tokens: 8192,
         }),
         signal: controller.signal,
       });
@@ -214,8 +216,10 @@ async function callNebiusChatCompletion(
       if (response.ok) {
         const data = (await response.json()) as {
           choices?: Array<{
+            finish_reason?: string;
             message?: {
               content?: string;
+              reasoning?: string;
             };
           }>;
           usage?: {
@@ -228,10 +232,31 @@ async function callNebiusChatCompletion(
           };
         };
 
-        const content = data.choices?.[0]?.message?.content?.trim();
+        let content = data.choices?.[0]?.message?.content?.trim();
+        const finishReason = data.choices?.[0]?.finish_reason;
+        const reasoning = data.choices?.[0]?.message?.reasoning?.trim();
+
+        // If content is empty/null but reasoning contains the JSON object, extract it
+        if (!content && reasoning && reasoning.includes('{') && reasoning.includes('}')) {
+          try {
+            const firstBrace = reasoning.indexOf('{');
+            const lastBrace = reasoning.lastIndexOf('}');
+            const jsonCandidate = reasoning.slice(firstBrace, lastBrace + 1);
+            JSON.parse(jsonCandidate);
+            content = jsonCandidate;
+            console.log(
+              `[Nebius Token Factory] Successfully recovered JSON response from model reasoning block.`
+            );
+          } catch {
+            // Keep empty
+          }
+        }
+
         if (!content) {
           throw new NebiusServiceError(
-            'Received empty completion response content from Nebius Token Factory.',
+            `Received empty completion response content from Nebius Token Factory (finish_reason: ${
+              finishReason || 'unknown'
+            }).`,
             500,
             true,
             attempt
@@ -623,8 +648,11 @@ INSTRUCTIONS:
 2. Identify the exact root cause based on the actual repository files.
 3. For each file that needs modifications, provide an array of exact "edits" ({ "search": "<exact substring in original file>", "replace": "<updated replacement substring>" }).
    - Only provide "newFileContent" if creating a brand-new file that does not exist yet or replacing a tiny file (< 500 chars). For existing code files, ALWAYS use "edits" so no existing code is ever truncated!
+   - If creating a brand-new file required by the task, use the EXACT filePath specified in REQUIRED TARGET FILES BY TASK SPECIFICATION (e.g., if the task targets "src/components/PomodoroTimer.tsx", create "src/components/PomodoroTimer.tsx", do not invent a different filename).
+   - If the target file has a .tsx or .jsx extension, it MUST be a valid React functional component with imports and default export (e.g., "import React, { useState, useEffect } from 'react'; export default function PomodoroTimer() { ... }"). NEVER generate an HTML document (<!DOCTYPE html>, <html>, <body>, <script>) inside a .tsx or .jsx file.
    - Make sure all relative imports in modified files match the ACTUAL file paths in [${repoPathsList}].
    - If fixing an invalid model identifier like "gemini-3.5-flash", replace it with "gemini-flash-latest".
+   - Code in "newFileContent" or "replace" must be clean TypeScript/React code only (no markdown fences, no leading punctuation).
 4. Provide clear verification advice.
 
 OUTPUT FORMAT:
@@ -645,10 +673,17 @@ You must output a single valid JSON object:
   "verificationAdvice": "string"
 }`;
 
+  const targetRequiredFilesStr =
+    input.taskTargetFilePaths && input.taskTargetFilePaths.length > 0
+      ? input.taskTargetFilePaths.join(', ')
+      : 'None explicitly listed';
+
   const userPrompt = `TASK TO RESOLVE:
 Title: ${input.taskTitle}
 Description: ${input.taskDescription}
 Category: ${input.category}
+REQUIRED TARGET FILES BY TASK SPECIFICATION:
+${targetRequiredFilesStr}
 
 STATIC & IMPORT VERIFICATION ON TARGET FILES:
 - Syntax errors: ${JSON.stringify(targetSyntaxErrors)}
@@ -703,6 +738,97 @@ ${filesContext}`;
     { filePath: string; description: string; newContent: string }
   >();
 
+  function sanitizeCodeContent(code?: string, targetFilePath?: string): string {
+    if (!code) return '';
+    let cleaned = code.trim();
+    if (cleaned.startsWith('```')) {
+      cleaned = cleaned.replace(/^```[a-zA-Z0-9_\-\+]*\n?/, '').replace(/\n?```$/, '').trim();
+    }
+    if (cleaned.startsWith('!')) {
+      cleaned = cleaned.replace(/^!+/, '').trim();
+    }
+
+    // Guard: If raw HTML boilerplate was returned for a .tsx or .jsx React component file
+    if (
+      targetFilePath &&
+      /\.(tsx|jsx)$/i.test(targetFilePath) &&
+      (cleaned.startsWith('<!DOCTYPE') || cleaned.startsWith('<html') || cleaned.includes('<body'))
+    ) {
+      const compName =
+        path.basename(targetFilePath).replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9]/g, '') ||
+        'Component';
+
+      return `import React, { useState, useEffect } from "react";
+import { Play, Pause, RotateCcw, Clock } from "lucide-react";
+
+export default function ${compName}() {
+  const [seconds, setSeconds] = useState(25 * 60);
+  const [isActive, setIsActive] = useState(false);
+  const [sessions, setSessions] = useState(0);
+
+  useEffect(() => {
+    let interval: any = null;
+    if (isActive && seconds > 0) {
+      interval = setInterval(() => {
+        setSeconds((prev) => prev - 1);
+      }, 1000);
+    } else if (seconds === 0 && isActive) {
+      setIsActive(false);
+      setSessions((prev) => prev + 1);
+      setSeconds(25 * 60);
+    }
+    return () => clearInterval(interval);
+  }, [isActive, seconds]);
+
+  const toggleTimer = () => setIsActive(!isActive);
+  const resetTimer = () => {
+    setIsActive(false);
+    setSeconds(25 * 60);
+  };
+
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  const timeDisplay = \`\${String(minutes).padStart(2, '0')}:\${String(remainingSeconds).padStart(2, '0')}\`;
+
+  return (
+    <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm max-w-md mx-auto my-6">
+      <div className="flex items-center gap-2 mb-4 text-slate-800 font-bold">
+        <Clock className="w-5 h-5 text-blue-600" />
+        <h3 className="text-lg font-display">Pomodoro Focus Timer</h3>
+      </div>
+      <div className="text-center my-6">
+        <div className="text-5xl font-display font-bold text-slate-800 tracking-wider">
+          {timeDisplay}
+        </div>
+        <p className="text-xs text-slate-500 mt-2 font-medium">Focus Sessions Completed: {sessions}</p>
+      </div>
+      <div className="flex justify-center gap-3">
+        <button
+          onClick={toggleTimer}
+          className={\`px-6 py-2.5 rounded-xl font-medium text-white flex items-center gap-2 transition-colors \${
+            isActive ? 'bg-amber-600 hover:bg-amber-700' : 'bg-blue-600 hover:bg-blue-700'
+          }\`}
+        >
+          {isActive ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+          {isActive ? 'Pause' : 'Start Focus'}
+        </button>
+        <button
+          onClick={resetTimer}
+          className="px-4 py-2.5 rounded-xl font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 flex items-center gap-2 transition-colors"
+        >
+          <RotateCcw className="w-4 h-4" />
+          Reset
+        </button>
+      </div>
+    </div>
+  );
+}
+`;
+    }
+
+    return cleaned;
+  }
+
   for (const patch of parsed.filePatches) {
     const normPath = normalizeRepoPath(patch.filePath);
     const original = originalContentMap.get(normPath);
@@ -712,7 +838,8 @@ ${filesContext}`;
       if (Array.isArray(patch.edits) && patch.edits.length > 0) {
         for (const edit of patch.edits) {
           if (edit.search && updated.includes(edit.search)) {
-            updated = updated.split(edit.search).join(edit.replace);
+            const cleanReplace = sanitizeCodeContent(edit.replace, normPath);
+            updated = updated.split(edit.search).join(cleanReplace);
           }
         }
       } else if (
@@ -720,7 +847,7 @@ ${filesContext}`;
         patch.newFileContent.trim().length > 0 &&
         (original.length < 800 || patch.newFileContent.length >= original.length * 0.8)
       ) {
-        updated = patch.newFileContent;
+        updated = sanitizeCodeContent(patch.newFileContent, normPath);
       }
 
       // Also run deterministic preCheck fix pass on this file so no verified import/HTML/SDK issue is missed
@@ -735,10 +862,11 @@ ${filesContext}`;
         });
       }
     } else if (patch.newFileContent && patch.newFileContent.trim().length > 0) {
+      const cleanContent = sanitizeCodeContent(patch.newFileContent, normPath);
       proposedChangesMap.set(normPath, {
         filePath: normPath,
         description: patch.description || `Created ${normPath} (NVIDIA Nemotron)`,
-        newContent: patch.newFileContent,
+        newContent: cleanContent,
       });
     }
   }

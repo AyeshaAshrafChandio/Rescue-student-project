@@ -660,7 +660,7 @@ function MainApp() {
       throw new Error('Authentication required for AI diagnosis.');
     }
     const token = await getIdToken();
-    return await requestAiFixForTask(
+    const result = await requestAiFixForTask(
       activeProject.id,
       task.id,
       userMessage,
@@ -668,6 +668,19 @@ function MainApp() {
       onRetryStatus,
       overrideProvider || selectedAiProvider
     );
+
+    // Update active task and task list with returned provider, model, and proposed changes
+    const updatedTask: RescueTask = {
+      ...task,
+      rootCauseAnalysis: result.explanation + '\n\n**Root Cause:** ' + result.rootCause,
+      proposedChanges: result.proposedChanges,
+      aiProvider: result.aiProvider || overrideProvider || selectedAiProvider,
+      modelUsed: result.modelUsed,
+    };
+    setCurrentRescueTask(updatedTask);
+    setRescueTasks(prev => prev.map(t => (t.id === task.id ? updatedTask : t)));
+
+    return result;
   };
 
   const handleProceedToNextTask = () => {

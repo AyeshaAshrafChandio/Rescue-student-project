@@ -65,7 +65,8 @@ async function fetchWithExponentialBackoff<T>(
   defaultErrorMsg: string,
   onRetryStatus?: (info: RetryStatusInfo) => void,
   maxAttempts = 3,
-  baseDelayMs = 2000
+  baseDelayMs = 2000,
+  aiProvider?: AiProvider
 ): Promise<T> {
   let lastError: Error = new Error(defaultErrorMsg);
 
@@ -98,11 +99,16 @@ async function fetchWithExponentialBackoff<T>(
     const seconds = Math.max(1, Math.round(delayMs / 1000));
 
     if (onRetryStatus) {
+      const providerLabel =
+        aiProvider === 'nebius'
+          ? 'NVIDIA Nemotron (Nebius Token Factory)'
+          : 'Google Gemini';
+
       onRetryStatus({
         attempt,
         maxAttempts,
         delayMs,
-        message: `Gemini API is experiencing high demand (503 UNAVAILABLE) — automatically retrying with exponential backoff (Attempt ${
+        message: `${providerLabel} is processing or experiencing high demand (status 503) — automatically retrying with exponential backoff (Attempt ${
           attempt + 1
         } of ${maxAttempts} in ${seconds}s)...`,
       });
@@ -206,7 +212,8 @@ export async function runProjectAnalysis(
     `Codebase analysis failed on ${providerLabel}.`,
     onRetryStatus,
     3,
-    2000
+    2000,
+    aiProvider
   );
 }
 
@@ -276,7 +283,8 @@ export async function requestAiFixForTask(
     `AI Code Diagnosis failed on ${providerLabel}.`,
     onRetryStatus,
     3,
-    2000
+    2000,
+    aiProvider
   );
 }
 

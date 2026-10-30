@@ -776,6 +776,7 @@ export interface WorkspaceTaskInput {
   allProjectFilePaths?: string[];
   allProjectFiles?: Array<{ filePath: string; content: string }>;
   targetFiles: Array<{ filePath: string; content: string }>;
+  taskTargetFilePaths?: string[];
   previousVerificationOutput?: string;
 }
 

@@ -17,11 +17,11 @@ import {
 } from '../lib/firebase-admin.ts';
 import {
   getAvailableAiProviders,
+  resolveRequestedProvider,
   runUnifiedCodebaseAnalysis,
   runUnifiedTaskDiagnosis,
   type SupportedAiProvider,
 } from './ai-router.ts';
-import { analyzeCodebaseWithGemini, diagnoseAndProposeCodeFix } from './gemini.ts';
 import { runRealCodeVerification, reconstructCanonicalRepoTree } from './verifier.ts';
 import { fetchGitHubRepository } from './github.ts';
 import {
@@ -362,8 +362,7 @@ apiRouter.post('/projects/:id/analyze', requireAuth, async (req: AuthRequest, re
       })
       .where(eq(projects.id, id));
 
-    const requestedProvider: SupportedAiProvider =
-      req.body?.aiProvider === 'nebius' ? 'nebius' : 'gemini';
+    const requestedProvider: SupportedAiProvider = resolveRequestedProvider(req.body?.aiProvider);
 
     // Call unified analysis (NVIDIA Nemotron via Nebius Token Factory or Google Gemini)
     const { analysis, aiProvider, modelUsed, tokenUsage } = await runUnifiedCodebaseAnalysis({
@@ -496,7 +495,7 @@ apiRouter.post('/projects/:id/analyze', requireAuth, async (req: AuthRequest, re
     }
 
     const statusCode = error.statusCode || 503;
-    const requestedProvider = req.body?.aiProvider === 'nebius' ? 'nebius' : 'gemini';
+    const requestedProvider = resolveRequestedProvider(req.body?.aiProvider);
     return res.status(statusCode).json({
       error:
         error.message ||
@@ -546,8 +545,12 @@ apiRouter.get('/projects/:id/report', requireAuth, async (req: AuthRequest, res:
       featuresBroken: JSON.parse(r.featuresBrokenJson || '[]'),
       featuresMissing: JSON.parse(r.featuresMissingJson || '[]'),
       featuresUnverifiable: JSON.parse(r.featuresUnverifiableJson || '[]'),
-      aiProvider: r.aiProvider || 'gemini',
-      modelUsed: r.modelUsed || 'gemini-flash-latest',
+      aiProvider: r.aiProvider || getAvailableAiProviders().defaultProvider,
+      modelUsed:
+        r.modelUsed ||
+        (r.aiProvider === 'gemini'
+          ? 'gemini-flash-latest'
+          : 'nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B'),
       createdAt: r.createdAt,
     });
   } catch (error: any) {
@@ -577,12 +580,17 @@ apiRouter.get('/projects/:id/tasks', requireAuth, async (req: AuthRequest, res: 
       .from(rescueTasks)
       .where(eq(rescueTasks.projectId, id));
 
+    const defaultProv = getAvailableAiProviders().defaultProvider;
     const formatted = taskList.map((t: any) => ({
       ...t,
       targetFiles: JSON.parse(t.targetFilesJson || '[]'),
       proposedChanges: t.proposedChangesJson ? JSON.parse(t.proposedChangesJson) : [],
-      aiProvider: t.aiProvider || 'gemini',
-      modelUsed: t.modelUsed || 'gemini-flash-latest',
+      aiProvider: t.aiProvider || defaultProv,
+      modelUsed:
+        t.modelUsed ||
+        (t.aiProvider === 'gemini'
+          ? 'gemini-flash-latest'
+          : 'nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B'),
     })).sort((a: any, b: any) => a.taskOrder - b.taskOrder);
 
     return res.json(formatted);
@@ -638,8 +646,10 @@ apiRouter.post('/projects/:id/tasks/:taskId/ai-fix', requireAuth, async (req: Au
     const contextFiles =
       matchingFiles.length > 0 ? matchingFiles : allFiles.slice(0, 10);
 
-    const requestedProvider: SupportedAiProvider =
-      clientProvider === 'nebius' ? 'nebius' : clientProvider === 'gemini' ? 'gemini' : (task.aiProvider as SupportedAiProvider) || 'gemini';
+    const requestedProvider: SupportedAiProvider = resolveRequestedProvider(
+      clientProvider,
+      task.aiProvider
+    );
 
     // Call unified AI fix diagnosis (NVIDIA Nemotron via Nebius Token Factory or Google Gemini)
     const { solution, aiProvider, modelUsed, tokenUsage } = await runUnifiedTaskDiagnosis({
@@ -652,6 +662,7 @@ apiRouter.post('/projects/:id/tasks/:taskId/ai-fix', requireAuth, async (req: Au
         allProjectFilePaths: allFiles.map((f: any) => f.filePath),
         allProjectFiles: allFiles.map((f: any) => ({ filePath: f.filePath, content: f.content })),
         targetFiles: contextFiles.map((f: any) => ({ filePath: f.filePath, content: f.content })),
+        taskTargetFilePaths: targetFilesArr,
         previousVerificationOutput: task.verificationOutput || undefined,
       },
     });
@@ -696,7 +707,7 @@ apiRouter.post('/projects/:id/tasks/:taskId/ai-fix', requireAuth, async (req: Au
   } catch (error: any) {
     console.error('Error generating AI fix:', error);
     const statusCode = error.statusCode || 503;
-    const requestedProvider = req.body?.aiProvider === 'nebius' ? 'nebius' : 'gemini';
+    const requestedProvider = resolveRequestedProvider(req.body?.aiProvider);
     return res.status(statusCode).json({
       error:
         error.message ||
